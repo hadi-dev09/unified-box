@@ -1,6 +1,19 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { supabaseServer } from "@/lib/supabase/server";
+
+async function revoke(form: FormData) {
+  "use server";
+  const { data: { user } } = await (await supabaseServer()).auth.getUser();
+  if (!user) return;
+  const clientId = String(form.get("client_id") ?? "");
+  const db = supabaseAdmin();
+  await db.from("oauth_tokens").update({ revoked_at: new Date().toISOString() }).eq("user_id", user.id).eq("client_id", clientId).is("revoked_at", null);
+  await db.from("audit_log").insert({ user_id: user.id, actor: "user", action: "oauth.revoked", target: clientId });
+  revalidatePath("/settings");
+}
 
 export default async function Settings({ searchParams }: { searchParams: Promise<{ msg?: string }> }) {
   const sb = await supabaseServer();
@@ -8,6 +21,8 @@ export default async function Settings({ searchParams }: { searchParams: Promise
   if (!user) redirect("/login");
   const { msg } = await searchParams;
   const { data: accounts } = await sb.from("accounts").select("id, display_name, account_type, status, status_detail, can_send");
+  const { data: grants } = await supabaseAdmin().from("oauth_tokens").select("client_id, oauth_clients(client_name)").eq("user_id", user.id).eq("kind", "refresh").is("revoked_at", null).gt("expires_at", new Date().toISOString());
+  const apps = [...new Map((grants ?? []).map((g) => [g.client_id, (g.oauth_clients as unknown as { client_name: string } | null)?.client_name ?? g.client_id])).entries()];
   const btn = "rounded-lg border border-neutral-300 px-3 py-3 text-sm dark:border-neutral-700";
   return (
     <main className="mx-auto max-w-xl p-4">
@@ -29,6 +44,16 @@ export default async function Settings({ searchParams }: { searchParams: Promise
           <li key={a.id} className="rounded border border-neutral-200 p-3 dark:border-neutral-800">
             {a.display_name} · {a.account_type} · {a.status}{a.can_send ? " · can send" : " · read-only"}
             {a.status_detail && <div className="text-xs text-red-600">{a.status_detail}</div>}
+          </li>
+        ))}
+      </ul>
+      <h2 className="mt-6 font-medium">Connected apps (Claude)</h2>
+      <ul className="mt-2 space-y-2 text-sm">
+        {apps.length === 0 && <li className="text-neutral-500">None yet. Add {process.env.APP_URL}/api/mcp as a custom connector in Claude.</li>}
+        {apps.map(([id, name]) => (
+          <li key={id} className="flex items-center justify-between rounded border border-neutral-200 p-3 dark:border-neutral-800">
+            <span>{name}</span>
+            <form action={revoke}><input type="hidden" name="client_id" value={id} /><button className="text-red-600">Revoke</button></form>
           </li>
         ))}
       </ul>
