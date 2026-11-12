@@ -46,6 +46,7 @@ export const tools: Tool[] = [
 
   def("search_messages", "Search message subjects, senders and bodies across all inboxes.", z.object({ query: z.string().min(2).max(200), limit }), async (uid, a) => {
     const term = a.query.replace(/[%,()*_\\]/g, " ").trim();
+    if (term.length < 2) return { notice: UNTRUSTED, results: [] };
     const { data } = await supabaseAdmin().from("messages").select("thread_id, from_name, from_addr, subject, sent_at, body_text").eq("user_id", uid)
       .or(`subject.ilike.%${term}%,from_addr.ilike.%${term}%,from_name.ilike.%${term}%,body_text.ilike.%${term}%`)
       .order("sent_at", { ascending: false }).limit(a.limit);
