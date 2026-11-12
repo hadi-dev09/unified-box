@@ -32,19 +32,23 @@ export async function syncAccount(accountId: string): Promise<{ accountId: strin
           },
           { onConflict: "account_id,external_id" },
         )
-        .select("id, client_id")
+        .select("id, client_id, seen_at")
         .single();
       if (error || !t) throw new Error(error?.message ?? "thread upsert failed");
+      // Read in Unified Box after the newest message arrived: keep it read even if Gmail still says unread.
+      if (t.seen_at && new Date(t.seen_at).getTime() >= new Date(last.sentAt).getTime() && list.some((m) => m.unread)) {
+        await db.from("threads").update({ unread: false }).eq("id", t.id);
+      }
       // Auto-tag by sender rules, but never overwrite a client the user chose by hand.
       if (!t.client_id && rules.length) {
-        const client = matchClient(rules, list.flatMap((m) => [m.fromAddr, ...m.to]).filter((a) => a.toLowerCase() !== acct.external_id.toLowerCase()));
+        const client = matchClient(rules, list.flatMap((m) => [m.fromAddr, ...m.to, ...m.cc]).filter((a) => a.toLowerCase() !== acct.external_id.toLowerCase()));
         if (client) await db.from("threads").update({ client_id: client }).eq("id", t.id).is("client_id", null);
       }
       const { error: e2 } = await db.from("messages").upsert(
         list.map((m) => ({
           user_id: acct.user_id, account_id: accountId, thread_id: t.id, external_id: m.id,
           from_addr: m.fromAddr, from_name: m.fromName, to_addrs: m.to, subject: m.subject,
-          body_text: m.body, sent_at: m.sentAt, is_outgoing: m.outgoing,
+          body_text: m.body, sent_at: m.sentAt, is_outgoing: m.outgoing, cc_addrs: m.cc, rfc_message_id: m.messageId || null,
         })),
         { onConflict: "account_id,external_id" },
       );

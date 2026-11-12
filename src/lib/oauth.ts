@@ -14,8 +14,9 @@ export const baseUrl = () => env("APP_URL").replace(/\/$/, "");
 
 export const CORS = {
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, POST, OPTIONS",
-  "access-control-allow-headers": "authorization, content-type, mcp-protocol-version",
+  "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
+  "access-control-allow-headers": "authorization, content-type, mcp-protocol-version, mcp-session-id, last-event-id",
+  "access-control-expose-headers": "www-authenticate, mcp-session-id, mcp-protocol-version",
 };
 export const preflight = () => new NextResponse(null, { status: 204, headers: CORS });
 export const json = (body: unknown, status = 200, extra: Record<string, string> = {}) =>
@@ -50,10 +51,14 @@ export async function issueTokens(userId: string, clientId: string) {
   return { access_token: access, token_type: "Bearer", expires_in: ACCESS_TTL_S, refresh_token: refresh };
 }
 
-/** Returns the user id for a valid, unexpired, unrevoked access token. */
+/** Returns the user id for a valid OAuth access token or personal access key (ubx_...). */
 export async function userFromBearer(header: string | null): Promise<string | null> {
-  const token = header?.match(/^Bearer (.+)$/i)?.[1];
+  const token = header?.match(/^Bearer\s+(\S+)\s*$/i)?.[1];
   if (!token) return null;
+  if (token.startsWith("ubx_")) {
+    const { userFromApiToken } = await import("./api-tokens");
+    return userFromApiToken(token);
+  }
   const { data } = await supabaseAdmin().from("oauth_tokens").select("user_id, expires_at, revoked_at").eq("token_hash", sha256(token)).eq("kind", "access").maybeSingle();
   if (!data || data.revoked_at || new Date(data.expires_at) < new Date()) return null;
   return data.user_id as string;

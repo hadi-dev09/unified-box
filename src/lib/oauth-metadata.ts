@@ -1,9 +1,9 @@
-import { baseUrl, json, preflight } from "@/lib/oauth";
+import { baseUrl } from "./oauth";
 
-export const OPTIONS = preflight;
-export async function GET() {
+/** RFC 8414 authorization-server metadata (also served at the OpenID discovery path for clients that only try that). */
+export function authServerMetadata() {
   const b = baseUrl();
-  return json({
+  return {
     issuer: b,
     authorization_endpoint: `${b}/oauth/authorize`,
     token_endpoint: `${b}/api/oauth/token`,
@@ -13,5 +13,6 @@ export async function GET() {
     code_challenge_methods_supported: ["S256"],
     token_endpoint_auth_methods_supported: ["none"],
     scopes_supported: ["mcp"],
-  });
+    service_documentation: `${b}/connect-ai`,
+  };
 }

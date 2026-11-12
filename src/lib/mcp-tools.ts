@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { replyRecipients } from "./reply";
 import { supabaseAdmin } from "./supabase/admin";
 
 // Message bodies are written by third parties. Tell the model to treat them as data.
@@ -45,7 +46,7 @@ export const tools: Tool[] = [
     const db = supabaseAdmin();
     const { data: t } = await db.from("threads").select("id, subject, account_id, accounts(display_name)").eq("id", a.thread_id).eq("user_id", uid).maybeSingle();
     if (!t) return { error: "thread not found" };
-    const { data: m } = await db.from("messages").select("from_name, from_addr, to_addrs, sent_at, is_outgoing, body_text").eq("thread_id", a.thread_id).eq("user_id", uid).order("sent_at");
+    const { data: m } = await db.from("messages").select("from_name, from_addr, to_addrs, cc_addrs, sent_at, is_outgoing, body_text").eq("thread_id", a.thread_id).eq("user_id", uid).order("sent_at");
     return { notice: UNTRUSTED, thread: t, messages: m };
   }),
 
@@ -74,21 +75,21 @@ export const tools: Tool[] = [
     }),
 
   def("draft_reply",
-    "Create a reply DRAFT to a thread. This does NOT send anything: the user must review and approve it in the Unified Box app.",
-    z.object({ thread_id: z.string().uuid(), body: z.string().min(1).max(10_000) }), async (uid, a) => {
+    "Create a reply DRAFT to a thread (set reply_all for group conversations). This does NOT send anything: the user must review and approve it in the Unified Box app.",
+    z.object({ thread_id: z.string().uuid(), body: z.string().min(1).max(10_000), reply_all: z.boolean().optional() }), async (uid, a) => {
       const db = supabaseAdmin();
-      const { data: t } = await db.from("threads").select("id, subject, account_id").eq("id", a.thread_id).eq("user_id", uid).maybeSingle();
+      const { data: t } = await db.from("threads").select("id, subject, account_id, accounts(external_id, provider)").eq("id", a.thread_id).eq("user_id", uid).maybeSingle();
       if (!t) return { error: "thread not found" };
-      const { data: acct } = await db.from("accounts").select("external_id").eq("id", t.account_id).single();
-      const { data: last } = await db.from("messages").select("from_addr, to_addrs, is_outgoing").eq("thread_id", t.id).order("sent_at", { ascending: false }).limit(1).single();
-      const to = last?.is_outgoing ? (last.to_addrs as string[]) : last?.from_addr ? [last.from_addr] : [];
-      const self = acct?.external_id?.toLowerCase();
-      const recipients = to.filter((x) => x.toLowerCase() !== self);
-      if (!recipients.length) return { error: "could not determine recipient" };
+      const acct = t.accounts as unknown as { external_id: string; provider: string } | null;
+      if (acct?.provider !== "gmail") return { error: "Drafting replies is only supported for Gmail conversations right now." };
+      const { data: msgs } = await db.from("messages").select("from_addr, to_addrs, cc_addrs, is_outgoing, sent_at").eq("thread_id", t.id).eq("user_id", uid);
+      const mode = a.reply_all ? "reply_all" : "reply";
+      const { to, cc } = replyRecipients(mode, msgs ?? [], acct.external_id);
+      if (!to.length) return { error: "could not determine recipient" };
       const subject = /^re:/i.test(t.subject ?? "") ? (t.subject as string) : `Re: ${t.subject ?? ""}`.trim();
-      const { data: d, error } = await db.from("drafts").insert({ user_id: uid, account_id: t.account_id, thread_id: t.id, to_addrs: recipients, subject, body: a.body, created_by: "claude" }).select("id").single();
+      const { data: d, error } = await db.from("drafts").insert({ user_id: uid, account_id: t.account_id, thread_id: t.id, mode, to_addrs: to, cc_addrs: cc, subject, body: a.body, created_by: "claude" }).select("id").single();
       if (error) return { error: error.message };
-      await db.from("audit_log").insert({ user_id: uid, actor: "claude", action: "draft.created", target: d.id, meta: { to: recipients } });
-      return { draft_id: d.id, status: "pending", message: "Draft saved. Ask the user to review and approve it in the Unified Box app. It has not been sent." };
+      await db.from("audit_log").insert({ user_id: uid, actor: "claude", action: "draft.created", target: d.id, meta: { to, cc } });
+      return { draft_id: d.id, status: "pending", to, cc, message: "Draft saved. Ask the user to review and approve it in the Unified Box app (Approvals). It has not been sent." };
     }),
 ];

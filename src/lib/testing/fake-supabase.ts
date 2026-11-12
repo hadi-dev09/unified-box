@@ -19,12 +19,14 @@ const UNIQUE: Record<string, string[][]> = {
   client_rules: [["user_id", "kind", "pattern"]],
   threads: [["account_id", "external_id"]],
   messages: [["account_id", "external_id"]],
+  api_tokens: [["token_hash"]],
 };
 const DEFAULTS: Record<string, () => Row> = {
   accounts: () => ({ status: "connected", status_detail: null, can_send: false, account_type: "personal", last_synced_at: null, created_at: now() }),
-  threads: () => ({ unread: false, needs_reply: false, client_id: null, last_from: null, snippet: null, subject: null }),
-  messages: () => ({ is_outgoing: false, to_addrs: [], from_name: null }),
-  drafts: () => ({ status: "pending", error: null, decided_at: null, thread_id: null, created_at: now() }),
+  threads: () => ({ unread: false, needs_reply: false, client_id: null, last_from: null, snippet: null, subject: null, seen_at: null }),
+  messages: () => ({ is_outgoing: false, to_addrs: [], cc_addrs: [], rfc_message_id: null, from_name: null }),
+  drafts: () => ({ status: "pending", error: null, decided_at: null, thread_id: null, cc_addrs: [], mode: "reply", created_at: now() }),
+  api_tokens: () => ({ created_at: now(), last_used_at: null, revoked_at: null }),
   oauth_codes: () => ({ used: false, resource: null }),
   oauth_tokens: () => ({ revoked_at: null, created_at: now() }),
   oauth_clients: () => ({ created_at: now() }),

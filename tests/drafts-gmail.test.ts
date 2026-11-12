@@ -117,7 +117,7 @@ test("approval: the human's edits are what gets sent (and are validated)", async
   try {
     const bad = async (payload: object) => draftsRoute.POST(new NextRequest("https://app.test/api/drafts/x", { method: "POST", body: JSON.stringify(payload), headers: { "content-type": "application/json" } }), { params: Promise.resolve({ id: d }) });
     assert.equal((await bad({ action: "approve", body: "   " })).status, 400);
-    assert.equal((await bad({ action: "approve", body: "x".repeat(10_001) })).status, 400);
+    assert.equal((await bad({ action: "approve", body: "x".repeat(20_001) })).status, 400);
     assert.equal((await bad({ action: "approve", subject: 5 })).status, 400);
     assert.equal(db.rows("drafts")[0].status, "pending", "invalid edits must not consume the draft");
     assert.equal(net.calls.length, 0);

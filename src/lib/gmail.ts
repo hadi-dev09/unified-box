@@ -109,8 +109,10 @@ const header = (p: Part, n: string) => p.headers?.find((h) => h.name.toLowerCase
 
 export type GmailMsg = {
   id: string; threadId: string; subject: string; fromName: string; fromAddr: string;
-  to: string[]; body: string; sentAt: string; snippet: string; unread: boolean; outgoing: boolean; automated: boolean;
+  to: string[]; cc: string[]; messageId: string; body: string; sentAt: string; snippet: string; unread: boolean; outgoing: boolean; automated: boolean;
 };
+
+const addrList = (v: string) => v.split(",").map((s) => parseFrom(s).addr).filter((a) => a.includes("@"));
 
 export async function recentMessages(accountId: string, selfEmail: string, days = 14, max = 50): Promise<GmailMsg[]> {
   const list = await gfetch(accountId, `messages?maxResults=${max}&q=${encodeURIComponent(`newer_than:${days}d -in:spam -in:trash`)}`);
@@ -124,7 +126,9 @@ export async function recentMessages(accountId: string, selfEmail: string, days 
       subject: header(m.payload, "Subject"),
       fromName: from.name,
       fromAddr: from.addr,
-      to: header(m.payload, "To").split(",").map((s) => parseFrom(s).addr).filter(Boolean),
+      to: addrList(header(m.payload, "To")),
+      cc: addrList(header(m.payload, "Cc")),
+      messageId: header(m.payload, "Message-ID").trim(),
       body: bodyText(m.payload).slice(0, 20_000),
       sentAt: new Date(Number(m.internalDate)).toISOString(),
       snippet: decodeEntities(m.snippet ?? ""),
@@ -142,20 +146,30 @@ export async function recentMessages(accountId: string, selfEmail: string, days 
   return out;
 }
 
-/** Sends a plain-text email. Only ever called after the user approves a draft in the UI. */
-export async function sendMail(accountId: string, from: string, to: string[], subject: string, body: string, threadId?: string) {
+export type OutgoingMail = {
+  from: string; to: string[]; cc?: string[]; subject: string; body: string;
+  threadId?: string; inReplyTo?: string; references?: string[];
+};
+
+const MSG_ID = /^<[^<>\s]{1,300}>$/;
+
+/** Sends a plain-text email. Only ever called after a signed-in human approves or writes it. */
+export async function sendMail(accountId: string, m: OutgoingMail) {
   const safe = (s: string) => s.replace(/[\r\n]+/g, " "); // block header injection
-  const raw = [
-    `From: ${safe(from)}`,
-    `To: ${to.map(safe).join(", ")}`,
-    `Subject: ${safe(subject)}`,
+  const refs = (m.references ?? []).filter((r) => MSG_ID.test(r)).slice(-20);
+  const inReplyTo = m.inReplyTo && MSG_ID.test(m.inReplyTo) ? m.inReplyTo : undefined;
+  const headers = [
+    `From: ${safe(m.from)}`,
+    `To: ${m.to.map(safe).join(", ")}`,
+    ...(m.cc?.length ? [`Cc: ${m.cc.map(safe).join(", ")}`] : []),
+    `Subject: ${safe(m.subject)}`,
+    ...(inReplyTo ? [`In-Reply-To: ${inReplyTo}`, `References: ${(refs.length ? refs : [inReplyTo]).join(" ")}`] : []),
     "MIME-Version: 1.0",
     'Content-Type: text/plain; charset="UTF-8"',
-    "",
-    body,
-  ].join("\r\n");
+  ];
+  const raw = [...headers, "", m.body].join("\r\n");
   return gfetch(accountId, "messages/send", {
     method: "POST",
-    body: JSON.stringify({ raw: Buffer.from(raw).toString("base64url"), ...(threadId ? { threadId } : {}) }),
+    body: JSON.stringify({ raw: Buffer.from(raw).toString("base64url"), ...(m.threadId ? { threadId: m.threadId } : {}) }),
   });
 }
