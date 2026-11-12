@@ -1,5 +1,7 @@
 import { supabaseAdmin } from "./supabase/admin";
 import { NeedsReauth, recentMessages } from "./gmail";
+import { loadRules } from "./clients";
+import { matchClient } from "./client-match";
 
 /** Pulls recent Gmail into the DB for one account. Failures set a visible account status; never silent. */
 export async function syncAccount(accountId: string) {
@@ -9,6 +11,7 @@ export async function syncAccount(accountId: string) {
 
   try {
     const msgs = await recentMessages(accountId, acct.external_id);
+    const rules = await loadRules(acct.user_id);
     const byThread = new Map<string, typeof msgs>();
     for (const m of msgs) byThread.set(m.threadId, [...(byThread.get(m.threadId) ?? []), m]);
 
@@ -26,9 +29,14 @@ export async function syncAccount(accountId: string) {
           },
           { onConflict: "account_id,external_id" },
         )
-        .select("id")
+        .select("id, client_id")
         .single();
       if (error || !t) throw new Error(error?.message ?? "thread upsert failed");
+      // Auto-tag by sender rules, but never overwrite a client the user chose by hand.
+      if (!t.client_id && rules.length) {
+        const client = matchClient(rules, list.flatMap((m) => [m.fromAddr, ...m.to]).filter((a) => a.toLowerCase() !== acct.external_id.toLowerCase()));
+        if (client) await db.from("threads").update({ client_id: client }).eq("id", t.id).is("client_id", null);
+      }
       const { error: e2 } = await db.from("messages").upsert(
         list.map((m) => ({
           user_id: acct.user_id, account_id: accountId, thread_id: t.id, external_id: m.id,

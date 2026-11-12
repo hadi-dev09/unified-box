@@ -27,10 +27,15 @@ export const tools: Tool[] = [
   }),
 
   def("list_threads", "List recent conversation threads across all inboxes, newest first.",
-    z.object({ account_id: z.string().uuid().optional(), unread_only: z.boolean().optional(), needs_reply: z.boolean().optional(), limit }),
+    z.object({ account_id: z.string().uuid().optional(), client: z.string().min(1).max(80).optional(), unread_only: z.boolean().optional(), needs_reply: z.boolean().optional(), limit }),
     async (uid, a) => {
       let q = supabaseAdmin().from("threads").select("id, account_id, subject, snippet, last_message_at, unread, needs_reply, accounts(display_name, account_type), clients(name)").eq("user_id", uid).order("last_message_at", { ascending: false }).limit(a.limit);
       if (a.account_id) q = q.eq("account_id", a.account_id);
+      if (a.client) {
+        const { data: c } = await supabaseAdmin().from("clients").select("id").eq("user_id", uid).ilike("name", a.client.replace(/[%_\\]/g, " ").trim()).maybeSingle();
+        if (!c) return { notice: UNTRUSTED, threads: [], note: `No client named "${a.client}"` };
+        q = q.eq("client_id", c.id);
+      }
       if (a.unread_only) q = q.eq("unread", true);
       if (a.needs_reply) q = q.eq("needs_reply", true);
       return { notice: UNTRUSTED, threads: (await q).data };

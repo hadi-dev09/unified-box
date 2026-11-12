@@ -12,6 +12,14 @@ const RELATIONS: Record<string, Record<string, string>> = {
   drafts: { accounts: "account_id" },
   oauth_tokens: { oauth_clients: "client_id" },
 };
+// Mirrors the UNIQUE constraints in supabase/migrations so inserts fail like Postgres would.
+const UNIQUE: Record<string, string[][]> = {
+  accounts: [["user_id", "provider", "external_id"]],
+  clients: [["user_id", "name"]],
+  client_rules: [["user_id", "kind", "pattern"]],
+  threads: [["account_id", "external_id"]],
+  messages: [["account_id", "external_id"]],
+};
 const DEFAULTS: Record<string, () => Row> = {
   accounts: () => ({ status: "connected", status_detail: null, can_send: false, account_type: "personal", last_synced_at: null, created_at: now() }),
   threads: () => ({ unread: false, needs_reply: false, client_id: null, last_from: null, snippet: null, subject: null }),
@@ -113,6 +121,10 @@ class Query implements PromiseLike<Result> {
         if (pk === "id" && !row.id) row.id = randomUUID();
         const keys = this.op === "upsert" ? (this.onConflict ?? pk).split(",").map((s) => s.trim()) : [pk];
         const existing = rows.find((r) => keys.every((k) => r[k] === row[k] && row[k] !== undefined));
+        if (!existing || this.op === "insert") {
+          const clash = (UNIQUE[this.table] ?? []).some((cols) => rows.some((r) => cols.every((c) => r[c] === row[c])));
+          if (clash) return fail(`duplicate key value violates unique constraint on ${this.table}`);
+        }
         if (existing) {
           if (this.op === "insert") return fail(`duplicate key value violates unique constraint on ${this.table}`);
           Object.assign(existing, p); affected.push(existing);
