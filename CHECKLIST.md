@@ -10,7 +10,8 @@ Two production deploys **failed** because the `CRON_SECRET` value in Vercel cont
 
 ## 1. Things only you can do
 
-- [ ] **(you) Approve database migration `0004`** (file: `supabase/migrations/0004_perf_and_client_rules.sql`).
+- [x] **Database migration `0004`**: applied via SQL Editor on 2026-11-12 and verified (client_rules table + RLS, policy and index advisor warnings cleared).
+  ~~Approve database migration `0004`~~ (file: `supabase/migrations/0004_perf_and_client_rules.sql`).
   It adds the `client_rules` table (needed for automatic client tagging), indexes, and faster security policies.
   The Supabase tool asked for confirmation because it drops and recreates policies, so it was **not** applied. Run it by pasting the file into Supabase → SQL Editor, or ask me to retry when you're at your desk.
   Until then everything works, but "auto-tag by sender" rules are disabled (you can still create clients and assign threads by hand).
