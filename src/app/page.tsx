@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { setThreadClient } from "@/lib/clients";
 import { supabaseServer } from "@/lib/supabase/server";
 import { LocalTime } from "./local-time";
+import { MessageBody } from "./message-body";
 import { AutoSync } from "./auto-sync";
 import { SyncButton } from "./sync-button";
 
@@ -217,7 +218,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ a
                     <LocalTime iso={m.sent_at} mode="full" />
                   </header>
                   {m.body_text?.trim()
-                    ? <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">{m.body_text}</pre>
+                    ? <MessageBody text={m.body_text} />
                     : <p className="text-sm italic text-neutral-500">No text content in this message (it may be only images or attachments). Press Sync to re-fetch if this is an older email.</p>}
                 </article>
               ))}
