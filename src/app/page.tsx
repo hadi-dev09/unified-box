@@ -7,7 +7,7 @@ import { LocalTime } from "./local-time";
 import { AutoSync } from "./auto-sync";
 import { SyncButton } from "./sync-button";
 
-type Account = { id: string; display_name: string; account_type: string; status: string; status_detail: string | null; last_synced_at: string | null };
+type Account = { id: string; provider?: string; display_name: string; account_type: string; status: string; status_detail: string | null; last_synced_at: string | null };
 type Filter = "all" | "unread" | "reply";
 
 const dot: Record<string, string> = {
@@ -35,7 +35,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ a
   const filter: Filter = f === "unread" || f === "reply" ? f : "all";
 
   const [{ data: accounts }, { count: pending }, { data: counts }, { data: clientRows }] = await Promise.all([
-    sb.from("accounts").select("id, display_name, account_type, status, status_detail, last_synced_at").order("display_name"),
+    sb.from("accounts").select("id, provider, display_name, account_type, status, status_detail, last_synced_at").order("display_name"),
     sb.from("drafts").select("id", { count: "exact", head: true }).eq("status", "pending"),
     sb.from("threads").select("account_id, client_id, unread, needs_reply").order("last_message_at", { ascending: false }).limit(2000),
     sb.from("clients").select("id, name").order("name"),
@@ -88,7 +88,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ a
             <span>All inboxes</span>
             {totalUnread > 0 && <span className="text-xs font-medium text-blue-600">{totalUnread}</span>}
           </Link>
-          <p className="mt-3 px-2 text-[11px] font-medium uppercase tracking-wide text-neutral-500">Gmail</p>
+          <p className="mt-3 px-2 text-[11px] font-medium uppercase tracking-wide text-neutral-500">Inboxes</p>
           {list.length === 0 && <p className="px-2 py-1 text-xs text-neutral-500">No accounts yet.</p>}
           {list.map((a) => (
             <Link key={a.id} href={`/?account=${a.id}`} title={a.status_detail ?? a.status}
@@ -96,7 +96,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ a
               <span className={`h-2 w-2 shrink-0 rounded-full ${dot[a.status] ?? "bg-neutral-400"}`} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate">{a.display_name}</span>
-                <span className="block text-[11px] text-neutral-500">{a.account_type}{statusText[a.status] ? ` · ${statusText[a.status]}` : ""}</span>
+                <span className="block text-[11px] text-neutral-500">{a.provider === "slack" ? "Slack" : a.account_type}{statusText[a.status] ? ` · ${statusText[a.status]}` : ""}</span>
               </span>
               {(per[a.id]?.unread ?? 0) > 0 && <span className="text-xs font-medium text-blue-600">{per[a.id].unread}</span>}
             </Link>

@@ -2,8 +2,15 @@
 
 One inbox for all your client conversations, plus an MCP server so Claude can read them all in one place.
 
-**Phase 1 (this commit):** Gmail (multiple accounts, personal + company), mobile-friendly web UI, read-only MCP server, and an approval queue for replies.
-**Planned:** Slack (user tokens), WhatsApp Business (Cloud API, coexistence), Upwork, Telegram, client grouping rules, daily digest.
+**Built:** Gmail (multiple accounts, personal + company), Slack (read-only, signed in as you), client grouping with auto-tag rules, mobile-friendly installable web app, OAuth-protected MCP server for Claude, and an approval queue for replies (with editing).
+**Planned:** WhatsApp Business (Cloud API), Upwork, Telegram, daily-digest page.
+
+See **CHECKLIST.md** for what to configure and how to test.
+
+## Develop
+- `npm run dev`, `npm test` (55 tests: OAuth, MCP, approvals, Gmail/Slack sync, clients), `npm run typecheck`.
+- `DEMO_MODE=1 npm run dev` runs the UI against in-memory fake data (never active in production builds).
+- Tests use an in-memory Supabase stand-in (`src/lib/testing`) and stubbed Gmail/Slack HTTP, so they need no credentials.
 
 ## Safety model
 - Gmail is connected **read-only by default**. Send scope is opt-in per account.

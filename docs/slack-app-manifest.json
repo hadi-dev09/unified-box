@@ -1,0 +1,31 @@
+{
+  "display_information": {
+    "name": "Unified Box",
+    "description": "Read-only unified inbox: shows the Slack conversations you can already see.",
+    "background_color": "#0a0a0a"
+  },
+  "oauth_config": {
+    "redirect_urls": [
+      "https://unified-box-eight.vercel.app/api/connect/slack/callback"
+    ],
+    "scopes": {
+      "user": [
+        "channels:history",
+        "channels:read",
+        "groups:history",
+        "groups:read",
+        "im:history",
+        "im:read",
+        "mpim:history",
+        "mpim:read",
+        "users:read",
+        "team:read"
+      ]
+    }
+  },
+  "settings": {
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

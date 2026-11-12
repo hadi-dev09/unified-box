@@ -1,13 +1,16 @@
 import { supabaseAdmin } from "./supabase/admin";
 import { NeedsReauth, recentMessages } from "./gmail";
 import { loadRules } from "./clients";
+import { syncSlack } from "./slack";
 import { matchClient } from "./client-match";
 
 /** Pulls recent Gmail into the DB for one account. Failures set a visible account status; never silent. */
-export async function syncAccount(accountId: string) {
+export async function syncAccount(accountId: string): Promise<{ accountId: string; synced: number; error?: string; note?: string }> {
   const db = supabaseAdmin();
   const { data: acct } = await db.from("accounts").select("*").eq("id", accountId).single();
-  if (!acct || acct.provider !== "gmail") return { accountId, synced: 0 };
+  if (!acct) return { accountId, synced: 0 };
+  if (acct.provider === "slack") return syncSlack(accountId);
+  if (acct.provider !== "gmail") return { accountId, synced: 0 };
 
   try {
     const msgs = await recentMessages(accountId, acct.external_id);

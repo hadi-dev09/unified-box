@@ -5,6 +5,7 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { disconnectAccount } from "@/lib/accounts";
 import { addRule, createClientRecord, deleteClientRecord, deleteRule } from "@/lib/clients";
 import { supabaseServer } from "@/lib/supabase/server";
+import { slackConfigured } from "@/lib/slack";
 import { ConfirmSubmit } from "./confirm-submit";
 
 async function userId() {
@@ -64,7 +65,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
   const { data: { user } } = await sb.auth.getUser();
   if (!user) redirect("/login");
   const { msg } = await searchParams;
-  const { data: accounts } = await sb.from("accounts").select("id, display_name, account_type, status, status_detail, can_send");
+  const { data: accounts } = await sb.from("accounts").select("id, provider, display_name, account_type, status, status_detail, can_send");
   const { data: grants } = await supabaseAdmin().from("oauth_tokens").select("client_id, oauth_clients(client_name)").eq("user_id", user.id).eq("kind", "refresh").is("revoked_at", null).gt("expires_at", new Date().toISOString());
   const apps = [...new Map((grants ?? []).map((g) => [g.client_id, (g.oauth_clients as unknown as { client_name: string } | null)?.client_name ?? g.client_id])).entries()];
   const [{ data: clientRows }, { data: ruleRows, error: rulesErr }] = await Promise.all([
@@ -88,7 +89,12 @@ export default async function Settings({ searchParams }: { searchParams: Promise
         <a className={btn} href="/api/connect/gmail?type=personal&write=1">Personal · read + send</a>
         <a className={btn} href="/api/connect/gmail?type=company&write=1">Company · read + send</a>
       </div>
-      <p className="mt-2 text-xs text-neutral-500">Company accounts may be blocked by a Workspace admin; you'll see a clear message if so. Slack, WhatsApp, Upwork and Telegram are coming next.</p>
+      <p className="mt-2 text-xs text-neutral-500">Company accounts may be blocked by a Workspace admin; you'll see a clear message if so. WhatsApp, Upwork and Telegram are coming next.</p>
+      <h2 className="mt-6 font-medium">Slack</h2>
+      <p className="mb-2 text-sm text-neutral-500">Read-only, signed in as you, so you see exactly what you can see in Slack. In client workspaces an admin may need to approve the app.</p>
+      {slackConfigured()
+        ? <a className={`${btn} inline-block`} href="/api/connect/slack">Connect a Slack workspace</a>
+        : <p className="rounded bg-neutral-100 p-3 text-sm dark:bg-neutral-900">Slack isn&apos;t set up yet. Create the Slack app (about 5 minutes, steps in CHECKLIST.md) and add its keys in Vercel.</p>}
       <h2 className="mt-6 font-medium">Connected</h2>
       <ul className="mt-2 space-y-2 text-sm">
         {(accounts ?? []).length === 0 && <li className="text-neutral-500">No accounts yet. Connect one above.</li>}
@@ -97,10 +103,10 @@ export default async function Settings({ searchParams }: { searchParams: Promise
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <div className="font-medium">{a.display_name}</div>
-                <div className="text-xs text-neutral-500">{a.account_type} · {a.status === "connected" ? "connected" : a.status.replace(/_/g, " ")} · {a.can_send ? "can send (with approval)" : "read-only"}</div>
+                <div className="text-xs text-neutral-500">{a.provider} · {a.account_type} · {a.status === "connected" ? "connected" : a.status.replace(/_/g, " ")} · {a.can_send ? "can send (with approval)" : "read-only"}</div>
               </div>
               <div className="flex items-center gap-3 text-sm">
-                {a.status !== "connected" && <a className="text-blue-600" href={`/api/connect/gmail?type=${a.account_type}${a.can_send ? "&write=1" : ""}`}>Reconnect</a>}
+                {a.status !== "connected" && <a className="text-blue-600" href={a.provider === "slack" ? "/api/connect/slack" : `/api/connect/gmail?type=${a.account_type}${a.can_send ? "&write=1" : ""}`}>Reconnect</a>}
                 <form action={disconnect}>
                   <input type="hidden" name="account_id" value={a.id} />
                   <ConfirmSubmit message={`Disconnect ${a.display_name}? Its synced messages will be deleted from Unified Box. Your real mailbox is not touched.`} className="text-red-600">Disconnect</ConfirmSubmit>

@@ -1,4 +1,5 @@
 import { decrypt } from "./crypto";
+import { slackRevoke } from "./slack";
 import { supabaseAdmin } from "./supabase/admin";
 
 /** Removes a connected account and everything synced from it (DB cascades), and revokes Google's grant. */
@@ -20,6 +21,13 @@ export async function disconnectAccount(userId: string, accountId: string): Prom
         });
       }
     } catch { /* ignore: deletion must still proceed */ }
+  }
+
+  if (acct.provider === "slack") {
+    try {
+      const { data: sec } = await db.from("account_secrets").select("tokens_enc").eq("account_id", accountId).maybeSingle();
+      if (sec) await slackRevoke(JSON.parse(decrypt(sec.tokens_enc)).access_token);
+    } catch { /* best effort */ }
   }
 
   const { error } = await db.from("accounts").delete().eq("id", accountId).eq("user_id", userId);

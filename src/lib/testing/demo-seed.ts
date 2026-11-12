@@ -42,6 +42,10 @@ export function seedDemo(db: FakeDb) {
   db.rows("drafts").push({ id: "d1", user_id: u, account_id: "a1", thread_id: "t1", to_addrs: ["sarah.mitchell@example.com"], subject: "Re: Q4 deliverables - need your sign-off by Friday", body: "Hi Sarah,\n\nThe mockups will be with you by Thursday noon. I'll flag the legend change so you can review it first.\n\nBest,\nRafay", status: "pending", created_by: "claude", created_at: ago(5) });
   db.rows("drafts").push({ id: "d2", user_id: u, account_id: "a1", thread_id: "t3", to_addrs: ["daniel@example.com"], subject: "Re: Proposal: Phase 2 build", body: "Thanks Daniel, sending the signed copy now.", status: "sent", created_by: "claude", created_at: ago(900) });
 
+  db.rows("clients").push({ id: "c1", user_id: u, name: "Greenbridge" }, { id: "c2", user_id: u, name: "Acme Agency" });
+  db.rows("client_rules").push({ id: "r1", user_id: u, client_id: "c1", kind: "domain", pattern: "greenbridge.io" }, { id: "r2", user_id: u, client_id: "c2", kind: "email", pattern: "daniel.okafor@acme-agency.com" });
+  for (const [t, c] of [["t2", "c1"], ["t7", "c1"], ["t5", "c2"]]) db.rows("threads").find((x) => x.id === t)!.client_id = c;
+  db.rows("accounts").push({ id: "a4", user_id: u, provider: "slack", account_type: "company", display_name: "Greenbridge Workspace", external_id: "T1:U1", status: "connected", can_send: false, last_synced_at: ago(8) });
   db.rows("oauth_clients").push({ client_id: "demo-claude", client_name: "Claude", redirect_uris: ["https://claude.example/callback"] });
   db.rows("oauth_tokens").push({ token_hash: "h1", kind: "refresh", client_id: "demo-claude", user_id: u, expires_at: ago(-60 * 24 * 20) });
 }
