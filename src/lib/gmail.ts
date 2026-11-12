@@ -1,6 +1,7 @@
 import { env } from "./env";
 import { decrypt, encrypt } from "./crypto";
 import { supabaseAdmin } from "./supabase/admin";
+import { decodeEntities, htmlToText, looksAutomated, parseFrom } from "./mail-text";
 
 export const READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
 export const SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
@@ -87,26 +88,29 @@ async function gfetch(accountId: string, path: string, init?: RequestInit) {
 
 type Part = { mimeType?: string; body?: { data?: string }; parts?: Part[]; headers?: { name: string; value: string }[] };
 
-function bodyText(p: Part): string {
-  if (p.mimeType === "text/plain" && p.body?.data) return Buffer.from(p.body.data, "base64url").toString("utf8");
+function findPart(p: Part, mime: string): string {
+  if (p.mimeType === mime && p.body?.data) return Buffer.from(p.body.data, "base64url").toString("utf8");
   for (const c of p.parts ?? []) {
-    const t = bodyText(c);
+    const t = findPart(c, mime);
     if (t) return t;
   }
   return "";
+}
+
+/** Prefer text/plain; many newsletters and system emails are HTML-only, so fall back to converting HTML. */
+function bodyText(p: Part): string {
+  const plain = findPart(p, "text/plain").trim();
+  if (plain) return plain;
+  const html = findPart(p, "text/html");
+  return html ? htmlToText(html) : "";
 }
 
 const header = (p: Part, n: string) => p.headers?.find((h) => h.name.toLowerCase() === n.toLowerCase())?.value ?? "";
 
 export type GmailMsg = {
   id: string; threadId: string; subject: string; fromName: string; fromAddr: string;
-  to: string[]; body: string; sentAt: string; snippet: string; unread: boolean; outgoing: boolean;
+  to: string[]; body: string; sentAt: string; snippet: string; unread: boolean; outgoing: boolean; automated: boolean;
 };
-
-function parseFrom(v: string) {
-  const m = v.match(/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/);
-  return m ? { name: m[1].trim(), addr: m[2] } : { name: "", addr: v.trim() };
-}
 
 export async function recentMessages(accountId: string, selfEmail: string, days = 14, max = 50): Promise<GmailMsg[]> {
   const list = await gfetch(accountId, `messages?maxResults=${max}&q=${encodeURIComponent(`newer_than:${days}d -in:spam -in:trash`)}`);
@@ -123,9 +127,16 @@ export async function recentMessages(accountId: string, selfEmail: string, days 
       to: header(m.payload, "To").split(",").map((s) => parseFrom(s).addr).filter(Boolean),
       body: bodyText(m.payload).slice(0, 20_000),
       sentAt: new Date(Number(m.internalDate)).toISOString(),
-      snippet: m.snippet ?? "",
+      snippet: decodeEntities(m.snippet ?? ""),
       unread: (m.labelIds ?? []).includes("UNREAD"),
       outgoing: from.addr.toLowerCase() === selfEmail.toLowerCase(),
+      automated: looksAutomated({
+        labels: m.labelIds ?? [],
+        fromAddr: from.addr,
+        listUnsubscribe: header(m.payload, "List-Unsubscribe"),
+        precedence: header(m.payload, "Precedence"),
+        autoSubmitted: header(m.payload, "Auto-Submitted"),
+      }),
     });
   }
   return out;

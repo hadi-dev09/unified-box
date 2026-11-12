@@ -21,7 +21,8 @@ export async function syncAccount(accountId: string) {
           {
             user_id: acct.user_id, account_id: accountId, external_id: ext,
             subject: last.subject, snippet: last.snippet, last_message_at: last.sentAt,
-            unread: list.some((m) => m.unread), needs_reply: !last.outgoing,
+            unread: list.some((m) => m.unread), needs_reply: !last.outgoing && !last.automated,
+            last_from: last.outgoing ? "You" : last.fromName || last.fromAddr,
           },
           { onConflict: "account_id,external_id" },
         )
