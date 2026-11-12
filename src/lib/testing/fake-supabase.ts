@@ -159,7 +159,17 @@ export class FakeDb {
 }
 
 const g = globalThis as unknown as { __FAKE_DB__?: FakeDb };
-export const fakeDb = () => (g.__FAKE_DB__ ??= new FakeDb());
+export const fakeDb = () => {
+  if (!g.__FAKE_DB__) {
+    g.__FAKE_DB__ = new FakeDb();
+    // Demo data is loaded lazily (require) so test runs and production never touch it.
+    if (process.env.DEMO_MODE === "1" && process.env.NODE_ENV !== "production") {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      (require("./demo-seed") as typeof import("./demo-seed")).seedDemo(g.__FAKE_DB__);
+    }
+  }
+  return g.__FAKE_DB__;
+};
 
 /** Fake is honoured only outside production, and only when explicitly enabled. */
 export const useFakeSupabase = () =>

@@ -93,16 +93,59 @@ test("approval: reject never sends; bad actions are refused", async () => {
   } finally { net.restore(); }
 });
 
-test("approval: header injection in subject/recipient cannot add headers", async () => {
-  const d = seedDraft(seedAccount(), A, { subject: "Hi\r\nBcc: attacker@evil.com", to_addrs: ["ok@acme.com\r\nBcc: attacker2@evil.com"] });
+test("approval: header injection via subject is neutralised; via recipient is rejected outright", async () => {
   db.user = A;
   const net = stubFetch(gmailSend);
   try {
+    const d = seedDraft(seedAccount(), A, { subject: "Hi\r\nBcc: attacker@evil.com" });
     await act(d, "approve");
     const raw = Buffer.from(JSON.parse(net.calls[0].body).raw, "base64url").toString();
     const headerBlock = raw.split("\r\n\r\n")[0];
     assert.ok(!/^Bcc:/im.test(headerBlock), headerBlock);
     assert.equal(headerBlock.split("\r\n").length, 5); // From, To, Subject, MIME-Version, Content-Type
+
+    const d2 = seedDraft(seedAccount(), A, { to_addrs: ["ok@acme.com\r\nBcc: attacker2@evil.com"] });
+    assert.equal((await act(d2, "approve")).status, 502);
+    assert.equal(net.calls.length, 1, "the malicious recipient must never reach Gmail");
+  } finally { net.restore(); }
+});
+
+test("approval: the human's edits are what gets sent (and are validated)", async () => {
+  const d = seedDraft(seedAccount());
+  db.user = A;
+  const net = stubFetch(gmailSend);
+  try {
+    const bad = async (payload: object) => draftsRoute.POST(new NextRequest("https://app.test/api/drafts/x", { method: "POST", body: JSON.stringify(payload), headers: { "content-type": "application/json" } }), { params: Promise.resolve({ id: d }) });
+    assert.equal((await bad({ action: "approve", body: "   " })).status, 400);
+    assert.equal((await bad({ action: "approve", body: "x".repeat(10_001) })).status, 400);
+    assert.equal((await bad({ action: "approve", subject: 5 })).status, 400);
+    assert.equal(db.rows("drafts")[0].status, "pending", "invalid edits must not consume the draft");
+    assert.equal(net.calls.length, 0);
+
+    const ok = await bad({ action: "approve", subject: "Edited\r\nsubject", body: "Edited by the human" });
+    assert.equal(ok.status, 200);
+    const raw = Buffer.from(JSON.parse(net.calls[0].body).raw, "base64url").toString();
+    assert.match(raw, /Subject: Edited subject/);
+    assert.match(raw, /Edited by the human/);
+    assert.doesNotMatch(raw, /Thanks!/);
+    assert.equal(db.rows("drafts")[0].body, "Edited by the human");
+    assert.equal(db.rows("audit_log").find((a) => a.action === "draft.approve")!.meta.edited, true);
+  } finally { net.restore(); }
+});
+
+test("approval: edits on reject are ignored; invalid recipients never reach Gmail", async () => {
+  db.user = A;
+  const net = stubFetch(gmailSend);
+  try {
+    const d1 = seedDraft(seedAccount());
+    await draftsRoute.POST(new NextRequest("https://app.test/x", { method: "POST", body: JSON.stringify({ action: "reject", body: "sneaky" }), headers: { "content-type": "application/json" } }), { params: Promise.resolve({ id: d1 }) });
+    assert.equal(db.rows("drafts")[0].body, "Thanks!");
+
+    const d2 = seedDraft(seedAccount(), A, { to_addrs: ["not-an-email"] });
+    const r = await act(d2, "approve");
+    assert.equal(r.status, 502);
+    assert.equal(net.calls.length, 0);
+    assert.match(String(db.rows("drafts").find((x) => x.id === d2)!.error), /Invalid recipient/);
   } finally { net.restore(); }
 });
 
@@ -292,4 +335,61 @@ test("/api/sync: auth rules (session, cron secret, neither)", async () => {
     const mine = await (await call()).json();
     assert.equal(mine.results.length, 1, "a user only syncs their own accounts");
   } finally { net.restore(); }
+});
+
+// ---------- disconnect, cron, housekeeping ----------
+import { cleanupExpired, disconnectAccount } from "../src/lib/accounts";
+import * as register from "../src/app/api/oauth/register/route";
+
+test("disconnect: owner only; revokes the Google grant; logs; deletes", async () => {
+  const mine = seedAccount(A), theirs = seedAccount(B);
+  const net = stubFetch((c) => c.url === "https://oauth2.googleapis.com/revoke" ? {} : undefined);
+  try {
+    assert.equal((await disconnectAccount(A.id, theirs)).ok, false, "cannot disconnect someone else's account");
+    assert.equal(db.rows("accounts").length, 2);
+    assert.equal(net.calls.length, 0);
+
+    assert.equal((await disconnectAccount(A.id, mine)).ok, true);
+    assert.deepEqual(db.rows("accounts").map((a) => a.id), [theirs]);
+    assert.equal(net.calls.length, 1);
+    assert.match(net.calls[0].body, /token=rt/);
+    assert.ok(db.rows("audit_log").some((a) => a.action === "account.disconnected"));
+  } finally { net.restore(); }
+});
+
+test("disconnect: still deletes if Google's revoke endpoint is down", async () => {
+  const mine = seedAccount(A);
+  const net = stubFetch(() => new Response("down", { status: 503 }));
+  try {
+    assert.equal((await disconnectAccount(A.id, mine)).ok, true);
+    assert.equal(db.rows("accounts").length, 0);
+  } finally { net.restore(); }
+});
+
+test("cron: GET needs the cron secret (a browser session is not enough); housekeeping keeps live tokens", async () => {
+  seedAccount(A);
+  const old = new Date(Date.now() - 3 * 86400_000).toISOString(), fresh = new Date(Date.now() + 3600_000).toISOString();
+  db.rows("oauth_clients").push({ client_id: "c1", client_name: "x", redirect_uris: ["https://x/y"] });
+  db.rows("oauth_codes").push({ code_hash: "old", client_id: "c1", user_id: A.id, expires_at: old }, { code_hash: "new", client_id: "c1", user_id: A.id, expires_at: fresh });
+  db.rows("oauth_tokens").push({ token_hash: "old", kind: "access", client_id: "c1", user_id: A.id, expires_at: old }, { token_hash: "live", kind: "refresh", client_id: "c1", user_id: A.id, expires_at: fresh });
+  const net = stubFetch((c) => c.url.includes("/messages?") ? { messages: [] } : undefined);
+  try {
+    db.user = A;
+    assert.equal((await syncRoute.GET(new NextRequest("https://app.test/api/sync"))).status, 401);
+    assert.equal((await syncRoute.GET(new NextRequest("https://app.test/api/sync", { headers: { authorization: "Bearer nope" } }))).status, 401);
+    assert.equal(db.rows("oauth_codes").length, 2, "unauthenticated GET must not clean up");
+
+    const r = await syncRoute.GET(new NextRequest("https://app.test/api/sync", { headers: { authorization: "Bearer cron-secret-for-tests" } }));
+    assert.equal(r.status, 200);
+    assert.deepEqual(db.rows("oauth_codes").map((c) => c.code_hash), ["new"]);
+    assert.deepEqual(db.rows("oauth_tokens").map((t) => t.token_hash), ["live"]);
+  } finally { net.restore(); }
+  await cleanupExpired(); // idempotent
+});
+
+test("registration is rate-limited per hour", async () => {
+  for (let i = 0; i < 100; i++) db.rows("oauth_clients").push({ client_id: `c${i}`, client_name: "x", redirect_uris: ["https://x/y"], created_at: new Date().toISOString() });
+  const r = await register.POST(new NextRequest("https://app.test/api/oauth/register", { method: "POST", body: JSON.stringify({ redirect_uris: ["https://claude.example/cb"] }), headers: { "content-type": "application/json" } }));
+  assert.equal(r.status, 429);
+  assert.equal(r.headers.get("retry-after"), "3600");
 });

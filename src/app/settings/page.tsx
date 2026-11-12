@@ -2,7 +2,18 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { disconnectAccount } from "@/lib/accounts";
 import { supabaseServer } from "@/lib/supabase/server";
+import { ConfirmSubmit } from "./confirm-submit";
+
+async function disconnect(form: FormData) {
+  "use server";
+  const { data: { user } } = await (await supabaseServer()).auth.getUser();
+  if (!user) return;
+  await disconnectAccount(user.id, String(form.get("account_id") ?? ""));
+  revalidatePath("/settings");
+  revalidatePath("/");
+}
 
 async function revoke(form: FormData) {
   "use server";
@@ -40,10 +51,23 @@ export default async function Settings({ searchParams }: { searchParams: Promise
       <p className="mt-2 text-xs text-neutral-500">Company accounts may be blocked by a Workspace admin; you'll see a clear message if so. Slack, WhatsApp, Upwork and Telegram are coming next.</p>
       <h2 className="mt-6 font-medium">Connected</h2>
       <ul className="mt-2 space-y-2 text-sm">
+        {(accounts ?? []).length === 0 && <li className="text-neutral-500">No accounts yet. Connect one above.</li>}
         {(accounts ?? []).map((a) => (
           <li key={a.id} className="rounded border border-neutral-200 p-3 dark:border-neutral-800">
-            {a.display_name} · {a.account_type} · {a.status}{a.can_send ? " · can send" : " · read-only"}
-            {a.status_detail && <div className="text-xs text-red-600">{a.status_detail}</div>}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="font-medium">{a.display_name}</div>
+                <div className="text-xs text-neutral-500">{a.account_type} · {a.status === "connected" ? "connected" : a.status.replace(/_/g, " ")} · {a.can_send ? "can send (with approval)" : "read-only"}</div>
+              </div>
+              <div className="flex items-center gap-3 text-sm">
+                {a.status !== "connected" && <a className="text-blue-600" href={`/api/connect/gmail?type=${a.account_type}${a.can_send ? "&write=1" : ""}`}>Reconnect</a>}
+                <form action={disconnect}>
+                  <input type="hidden" name="account_id" value={a.id} />
+                  <ConfirmSubmit message={`Disconnect ${a.display_name}? Its synced messages will be deleted from Unified Box. Your real mailbox is not touched.`} className="text-red-600">Disconnect</ConfirmSubmit>
+                </form>
+              </div>
+            </div>
+            {a.status_detail && <div className="mt-1 text-xs text-red-600">{a.status_detail}</div>}
           </li>
         ))}
       </ul>

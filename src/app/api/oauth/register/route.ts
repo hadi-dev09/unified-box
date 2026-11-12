@@ -12,6 +12,9 @@ export async function POST(req: NextRequest) {
   if (!Array.isArray(uris) || uris.length === 0 || uris.length > 10 || !uris.every((u) => typeof u === "string" && validRedirectUri(u))) {
     return json({ error: "invalid_redirect_uri", error_description: "redirect_uris must be https (or loopback http) URLs" }, 400);
   }
+  // Abuse guard: registration is open by design (DCR), so cap how many clients can be created per hour.
+  const { count } = await supabaseAdmin().from("oauth_clients").select("client_id", { count: "exact", head: true }).gt("created_at", new Date(Date.now() - 3600_000).toISOString());
+  if ((count ?? 0) >= 100) return json({ error: "temporarily_unavailable", error_description: "Too many registrations. Try again later." }, 429, { "retry-after": "3600" });
   const name = typeof b.client_name === "string" && b.client_name.trim() ? b.client_name.trim().slice(0, 100) : "Unnamed app";
   const client_id = randomBytes(16).toString("hex");
   const { error } = await supabaseAdmin().from("oauth_clients").insert({ client_id, client_name: name, redirect_uris: uris });

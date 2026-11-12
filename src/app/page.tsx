@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
 import { LocalTime } from "./local-time";
+import { AutoSync } from "./auto-sync";
 import { SyncButton } from "./sync-button";
 
 type Account = { id: string; display_name: string; account_type: string; status: string; status_detail: string | null; last_synced_at: string | null };
@@ -50,6 +51,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ a
     : [{ data: null }, { data: null }];
 
   const list = (accounts ?? []) as Account[];
+  const lastSynced = list.map((a) => a.last_synced_at).filter(Boolean).sort().pop() ?? null;
   const hasThread = Boolean(thread);
   const qs = (o: Record<string, string | undefined>) => {
     const p = new URLSearchParams(Object.entries({ account, f: filter === "all" ? undefined : filter, ...o }).filter(([, v]) => v) as [string, string][]);
@@ -59,8 +61,9 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ a
 
   return (
     <div className="grid h-dvh grid-cols-1 md:grid-cols-[260px_360px_1fr]">
+      <AutoSync enabled={list.some((a) => a.status === "connected" || a.status === "error")} lastSyncedAt={lastSynced} />
       {/* Sidebar */}
-      <aside className={`${hasThread ? "hidden md:flex" : "flex"} ${account ? "hidden md:flex" : ""} flex-col gap-3 overflow-y-auto border-r border-neutral-200 p-3 dark:border-neutral-800`}>
+      <aside className="hidden flex-col gap-3 overflow-y-auto border-r border-neutral-200 p-3 dark:border-neutral-800 md:flex">
         <div className="flex items-center justify-between">
           <h1 className="text-base font-semibold">Unified Box</h1>
           <SyncButton />
@@ -96,6 +99,26 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ a
 
       {/* Thread list */}
       <section className={`${hasThread ? "hidden md:flex" : "flex"} min-h-0 flex-col border-r border-neutral-200 dark:border-neutral-800`}>
+        <div className="border-b border-neutral-200 md:hidden dark:border-neutral-800">
+          <div className="flex items-center justify-between gap-2 px-3 pt-3">
+            <h1 className="text-base font-semibold">Unified Box</h1>
+            <div className="flex items-center gap-2 text-sm">
+              <Link href="/approvals" className="rounded-md border border-neutral-300 px-2 py-1 dark:border-neutral-700">Approvals{pending ? ` (${pending})` : ""}</Link>
+              <Link href="/settings" className="rounded-md border border-neutral-300 px-2 py-1 dark:border-neutral-700">Accounts</Link>
+              <SyncButton />
+            </div>
+          </div>
+          <div className="flex gap-2 overflow-x-auto px-3 py-2 text-sm [scrollbar-width:none]">
+            <Link href={qs({ account: undefined, thread: undefined })} className={`shrink-0 rounded-full border px-3 py-1 ${!account ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900" : "border-neutral-300 dark:border-neutral-700"}`}>All{totalUnread ? ` · ${totalUnread}` : ""}</Link>
+            {list.map((a) => (
+              <Link key={a.id} href={qs({ account: a.id, thread: undefined })} className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 ${account === a.id ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900" : "border-neutral-300 dark:border-neutral-700"}`}>
+                <span className={`h-2 w-2 rounded-full ${dot[a.status] ?? "bg-neutral-400"}`} />
+                {a.display_name.split("@")[0]}{(per[a.id]?.unread ?? 0) > 0 ? ` · ${per[a.id].unread}` : ""}
+              </Link>
+            ))}
+          </div>
+          {list.some((a) => a.status !== "connected") && <p className="mx-3 mb-2 rounded-md bg-amber-50 p-2 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-200">Some inboxes need attention. Tap Accounts.</p>}
+        </div>
         <div className="flex gap-1 border-b border-neutral-200 p-2 text-sm dark:border-neutral-800">
           {([["all", "All"], ["unread", `Unread${totalUnread ? ` (${totalUnread})` : ""}`], ["reply", `Needs reply${totalReply ? ` (${totalReply})` : ""}`]] as const).map(([k, label]) => (
             <Link key={k} href={qs({ f: k === "all" ? undefined : k, thread: undefined })}

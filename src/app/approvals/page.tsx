@@ -17,10 +17,15 @@ export default async function Approvals() {
       {(drafts ?? []).map((d) => (
         <article key={d.id} className="mb-3 rounded-lg border border-neutral-200 p-3 dark:border-neutral-800">
           <div className="text-xs text-neutral-500">From {(d.accounts as unknown as { display_name: string } | null)?.display_name} → {d.to_addrs.join(", ")} · by {d.created_by} · {d.status}</div>
-          <div className="mt-1 font-medium">{d.subject}</div>
-          <pre className="mt-2 whitespace-pre-wrap break-words font-sans text-sm">{d.body}</pre>
+          {d.status === "pending" ? (
+            <DraftActions id={d.id} subject={d.subject} body={d.body} />
+          ) : (
+            <>
+              <div className="mt-1 font-medium">{d.subject}</div>
+              <pre className="mt-2 whitespace-pre-wrap break-words font-sans text-sm">{d.body}</pre>
+            </>
+          )}
           {d.error && <div className="mt-2 text-xs text-red-600">{d.error}</div>}
-          {d.status === "pending" && <DraftActions id={d.id} />}
         </article>
       ))}
     </main>
