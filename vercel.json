@@ -3,11 +3,5 @@
   "framework": "nextjs",
   "regions": [
     "iad1"
-  ],
-  "crons": [
-    {
-      "path": "/api/sync",
-      "schedule": "0 4 * * *"
-    }
   ]
 }

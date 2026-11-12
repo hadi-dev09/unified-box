@@ -3,6 +3,11 @@
 Live app: https://unified-box-eight.vercel.app
 Everything below marked **(you)** needs your accounts or your approval. Everything else is already built and automatically tested (55 tests).
 
+## 0. URGENT: fix `CRON_SECRET` (2 minutes)
+Two production deploys **failed** because the `CRON_SECRET` value in Vercel contains line breaks (probably two pasted values). The last good version stayed live, so nothing broke for you, but new changes only deploy after this:
+- [ ] **(you)** Vercel → project → Settings → Environment Variables → edit `CRON_SECRET` → replace the value with **one single line, no spaces or line breaks** (e.g. the output of one `openssl rand -hex 32`). Save.
+- [ ] Then tell me. I'll restore the daily cron in `vercel.json` (it was removed so deploys succeed meanwhile). Also check `TOKEN_ENCRYPTION_KEY` is exactly one line (44 characters ending in `=`).
+
 ## 1. Things only you can do
 
 - [ ] **(you) Approve database migration `0004`** (file: `supabase/migrations/0004_perf_and_client_rules.sql`).
@@ -57,7 +62,7 @@ Everything below marked **(you)** needs your accounts or your approval. Everythi
 - [ ] Phone: browser menu → **Add to Home Screen**. The app opens full-screen with the inbox icon.
 
 ## 3. What is automated (no action needed)
-- Daily background sync at 04:00 UTC (Vercel cron), plus a refresh when you open the app and the data is older than 5 minutes.
+- A refresh when you open the app and the data is older than 5 minutes. (Daily background sync at 04:00 UTC is built (`GET /api/sync`) but switched off until `CRON_SECRET` is fixed, see section 0.)
 - Expired OAuth codes/tokens are cleaned up daily.
 - Security headers (no framing of the approval screen), rate limit on connector registration.
 
