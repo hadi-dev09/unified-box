@@ -42,6 +42,19 @@ Two production deploys **failed** because the `CRON_SECRET` value in Vercel cont
 - [ ] On a **read-only** account, approving fails with a clear "read-only" error and sends nothing.
 - [ ] **Reject** really discards the draft.
 
+### New: layout, read state, replies (Nov 13 update)
+- [ ] Desktop: the inbox list fills the page; clicking a message opens the reading panel; **×** closes it.
+- [ ] **☰** hides/shows the sidebar and remembers your choice. On a phone, ☰ opens a slide-in menu.
+- [ ] Open an unread message: the blue dot and Unread count drop. Press Sync: it stays read until new mail arrives.
+  (This is read state inside Unified Box. Gmail itself isn't changed, because the app only has read permission.)
+- [ ] Search box filters by sender, subject and preview.
+- [ ] In a conversation: **Reply**, **Reply all** (shown when several people are involved), **Forward**. On a read-only inbox you'll see a note and "Save to Approvals"; on a read + send inbox, **Send** goes out immediately and threads correctly in the recipient's mail app.
+- [ ] Links in emails show as short, tappable labels.
+
+### Other AIs (Connect your AI page)
+- [ ] Sidebar → **Connect your AI**: copy the server URL; follow the ChatGPT / Gemini / Grok steps (plan restrictions apply).
+- [ ] For tools without sign-in (Cursor, Grok API, DeepSeek harness): create an **access key**, use `Authorization: Bearer <key>`, and revoke it when done.
+
 ### Claude connector
 - [ ] Claude → Settings → Connectors → Add custom connector → `https://unified-box-eight.vercel.app/api/mcp`.
 - [ ] You land on the **Connect Claude** screen listing what it can and cannot do. Approve.

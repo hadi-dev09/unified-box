@@ -77,9 +77,9 @@ export default async function Settings({ searchParams }: { searchParams: Promise
   const field = "rounded-lg border border-neutral-300 bg-transparent px-3 py-2 text-sm dark:border-neutral-700";
   const btn = "rounded-lg border border-neutral-300 px-3 py-3 text-sm dark:border-neutral-700";
   return (
-    <main className="mx-auto max-w-xl p-4">
-      <Link href="/" className="text-sm text-blue-600">← Inbox</Link>
-      <h1 className="my-3 text-xl font-semibold">Connect accounts</h1>
+    <main className="mx-auto max-w-2xl px-4 py-6 md:py-10">
+      <Link href="/" className="text-sm text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white">← Inbox</Link>
+      <h1 className="my-3 text-2xl font-semibold tracking-tight">Connect accounts</h1>
       {msg && <p className="mb-3 rounded bg-neutral-100 p-3 text-sm dark:bg-neutral-900">{msg}</p>}
       <h2 className="mt-4 font-medium">Gmail</h2>
       <p className="mb-2 text-sm text-neutral-500">Read-only by default. Enable sending only if you want to approve and send replies from here.</p>
@@ -99,7 +99,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
       <ul className="mt-2 space-y-2 text-sm">
         {(accounts ?? []).length === 0 && <li className="text-neutral-500">No accounts yet. Connect one above.</li>}
         {(accounts ?? []).map((a) => (
-          <li key={a.id} className="rounded border border-neutral-200 p-3 dark:border-neutral-800">
+          <li key={a.id} className="rounded-xl bg-white p-3 ring-1 ring-neutral-200/70 dark:bg-neutral-900 dark:ring-neutral-800">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <div className="font-medium">{a.display_name}</div>
@@ -126,7 +126,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
       </form>
       <ul className="mt-3 space-y-2 text-sm">
         {clients.map((c) => (
-          <li key={c.id} className="rounded border border-neutral-200 p-3 dark:border-neutral-800">
+          <li key={c.id} className="rounded-xl bg-white p-3 ring-1 ring-neutral-200/70 dark:bg-neutral-900 dark:ring-neutral-800">
             <div className="flex items-center justify-between">
               <span className="font-medium">{c.name}</span>
               <form action={removeClient}><input type="hidden" name="client_id" value={c.id} /><ConfirmSubmit message={`Delete client ${c.name}? Threads stay, they just lose this tag.`} className="text-xs text-red-600">Delete</ConfirmSubmit></form>
@@ -150,11 +150,12 @@ export default async function Settings({ searchParams }: { searchParams: Promise
           </li>
         ))}
       </ul>
-      <h2 className="mt-6 font-medium">Connected apps (Claude)</h2>
+      <h2 className="mt-6 font-medium">Connected AI apps</h2>
+      <p className="mb-2 text-sm text-neutral-500">Connect ChatGPT, Gemini, Grok and others, and manage access keys, on <Link href="/connect-ai" className="text-blue-600 underline">Connect your AI</Link>.</p>
       <ul className="mt-2 space-y-2 text-sm">
-        {apps.length === 0 && <li className="text-neutral-500">None yet. Add {process.env.APP_URL}/api/mcp as a custom connector in Claude.</li>}
+        {apps.length === 0 && <li className="text-neutral-500">None yet. See Connect your AI.</li>}
         {apps.map(([id, name]) => (
-          <li key={id} className="flex items-center justify-between rounded border border-neutral-200 p-3 dark:border-neutral-800">
+          <li key={id} className="flex items-center justify-between rounded-xl bg-white p-3 ring-1 ring-neutral-200/70 dark:bg-neutral-900 dark:ring-neutral-800">
             <span>{name}</span>
             <form action={revoke}><input type="hidden" name="client_id" value={id} /><button className="text-red-600">Revoke</button></form>
           </li>
