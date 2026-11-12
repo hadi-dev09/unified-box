@@ -5,7 +5,7 @@ const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
 export const DEMO_USER = { id: "00000000-0000-4000-8000-0000000000d0", email: "demo@example.com" };
 
 export function seedDemo(db: FakeDb) {
-  db.user = DEMO_USER;
+  db.user = process.env.DEMO_SIGNED_OUT === "1" ? null : DEMO_USER;
   const u = DEMO_USER.id;
   const accts = [
     { id: "a1", display_name: "rafay.work@gmail.com", account_type: "personal", status: "connected" },

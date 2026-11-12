@@ -6,6 +6,7 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { supabaseServer } from "@/lib/supabase/server";
 import { LocalTime } from "../local-time";
 import { Icon } from "../ui";
+import { ConnectButton } from "./connect-button";
 import { CopyButton } from "./copy-button";
 import { NewKey } from "./new-key";
 
@@ -33,7 +34,7 @@ async function revokeApp(form: FormData) {
   revalidatePath("/connect-ai");
 }
 
-type Guide = { name: string; status: "works" | "limited" | "key"; steps: React.ReactNode[]; note?: string };
+type Guide = { name: string; status: "works" | "limited" | "key"; steps: React.ReactNode[]; note?: string; action?: { href: string; label: string; copy?: boolean; primary?: boolean } };
 
 export default async function ConnectAI() {
   const u = await uid();
@@ -46,13 +47,24 @@ export default async function ConnectAI() {
   ]);
   const apps = [...new Map((grants ?? []).map((g) => [g.client_id, (g.oauth_clients as unknown as { client_name: string } | null)?.client_name ?? "AI app"])).entries()];
 
+  const claudeLink = `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=${encodeURIComponent("Unified Box")}&connectorUrl=${encodeURIComponent(url)}`;
   const guides: Guide[] = [
-    { name: "Claude", status: "works", steps: ["Settings → Connectors → Add custom connector", "Paste the server URL above", "Approve on the Unified Box screen that opens"] },
-    { name: "ChatGPT", status: "works", steps: ["Settings → Apps & Connectors → Advanced → turn on Developer mode", "Create / Add a connector, paste the server URL, choose OAuth", "Approve on the Unified Box screen"], note: "Developer mode availability depends on your ChatGPT plan; Business/Enterprise admins must enable it." },
-    { name: "Gemini", status: "limited", steps: ["Gemini → Settings → Connected apps → Add a custom app", "Paste the server URL and sign in", "Approve on the Unified Box screen"], note: "Google has rolled this out gradually (reported: US, English, Keep Activity on, some plans). Gemini Enterprise admins can add it under Connected apps." },
-    { name: "Grok", status: "works", steps: ["grok.com/connectors → New connector → Custom", "Paste the server URL", "Approve on the Unified Box screen (paid Grok plans)"], note: "For the xAI API, use an access key below as the Authorization header." },
-    { name: "DeepSeek & others", status: "key", steps: ["DeepSeek's app doesn't support connectors yet", "Use an MCP-capable tool (Cursor, Claude Code, Codex, DeepSeek harness) with the server URL", "Create an access key below and set header Authorization: Bearer <key>"] },
+    { name: "Claude", status: "works", action: { href: claudeLink, label: "Connect to Claude", primary: true },
+      steps: ["Click Connect: Claude opens with Unified Box already filled in", "Click Add in Claude", "Approve on the Unified Box screen. Done"],
+      note: "Team/Enterprise: an organization Owner adds it once, then each member connects." },
+    { name: "ChatGPT", status: "works", action: { href: "https://chatgpt.com/#settings/Connectors", label: "Copy URL & open ChatGPT", copy: true },
+      steps: ["Settings → Apps & Connectors → Advanced → turn on Developer mode", "Create a connector, paste the URL (already copied), choose OAuth", "Approve on the Unified Box screen"],
+      note: "Developer mode depends on your ChatGPT plan; Business/Enterprise admins must enable it." },
+    { name: "Grok", status: "works", action: { href: "https://grok.com/connectors", label: "Copy URL & open Grok", copy: true },
+      steps: ["New connector → Custom", "Paste the URL (already copied)", "Approve on the Unified Box screen (paid Grok plans)"],
+      note: "For the xAI API, use an access key below as the Authorization header." },
+    { name: "Gemini", status: "limited", action: { href: "https://gemini.google.com/app", label: "Copy URL & open Gemini", copy: true },
+      steps: ["Settings → Connected apps → Add a custom app", "Paste the URL (already copied) and sign in", "Approve on the Unified Box screen"],
+      note: "Google is rolling this out gradually (reported: US, English, Keep Activity on, some plans)." },
+    { name: "DeepSeek & others", status: "key",
+      steps: ["DeepSeek's app doesn't support connectors yet", "Use an MCP-capable tool (Cursor, Claude Code, Codex, DeepSeek harness) with the server URL", "Create an access key below and set header Authorization: Bearer <key>"] },
   ];
+
   const pill: Record<Guide["status"], string> = {
     works: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200",
     limited: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200",
@@ -66,7 +78,7 @@ export default async function ConnectAI() {
       <Link href="/" className="inline-flex items-center gap-1 text-sm text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white"><Icon name="back" /> Inbox</Link>
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Connect your AI</h1>
-        <p className="mt-1 text-sm text-neutral-500">Any assistant that supports MCP connectors can read your inboxes and draft replies. It can never send or delete: drafts wait for you in Approvals.</p>
+        <p className="mt-1 text-sm text-neutral-500">Pick your assistant and click Connect. You&apos;ll approve once on a Unified Box screen. Assistants can read your inboxes and draft replies, but never send or delete: drafts wait for you in Approvals.</p>
       </div>
 
       <section className={card}>
@@ -79,7 +91,7 @@ export default async function ConnectAI() {
 
       <section className="grid gap-3 md:grid-cols-2">
         {guides.map((g) => (
-          <div key={g.name} className={card}>
+          <div key={g.name} className={`${card} flex flex-col`}>
             <div className="flex items-center justify-between">
               <h2 className="font-semibold">{g.name}</h2>
               <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${pill[g.status]}`}>{pillText[g.status]}</span>
@@ -88,6 +100,7 @@ export default async function ConnectAI() {
               {g.steps.map((s, i) => <li key={i}>{s}</li>)}
             </ol>
             {g.note && <p className="mt-3 text-xs text-neutral-500">{g.note}</p>}
+            {g.action && <div className="mt-auto pt-4"><ConnectButton href={g.action.href} label={g.action.label} copyText={g.action.copy ? url : undefined} primary={g.action.primary} /></div>}
           </div>
         ))}
       </section>

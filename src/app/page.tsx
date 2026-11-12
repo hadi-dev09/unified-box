@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
 import { forwardBlock, isGroup, replyRecipients, replySubject, type Msg } from "@/lib/reply";
 import { supabaseServer } from "@/lib/supabase/server";
 import { assignClientAction } from "./actions";
+import { Landing } from "./landing";
 import { AutoSync } from "./auto-sync";
 import { Composer, type Preset } from "./composer";
 import { LocalTime } from "./local-time";
@@ -16,12 +16,12 @@ import { Avatar, Icon, ProviderIcon, statusDot, statusLabel } from "./ui";
 type Account = { id: string; provider: string; display_name: string; account_type: string; status: string; status_detail: string | null; last_synced_at: string | null; can_send: boolean; external_id: string };
 type Thread = { id: string; subject: string | null; snippet: string | null; last_message_at: string; unread: boolean; needs_reply: boolean; last_from: string | null; account_id: string; accounts: { display_name: string; provider: string } | null; clients: { name: string } | null };
 type Filter = "all" | "unread" | "reply";
-type Search = { account?: string; client?: string; thread?: string; f?: string; q?: string };
+type Search = { account?: string; client?: string; thread?: string; f?: string; q?: string; notice?: string };
 
 export default async function Home({ searchParams }: { searchParams: Promise<Search> }) {
   const sb = await supabaseServer();
   const { data: { user } } = await sb.auth.getUser();
-  if (!user) redirect("/login");
+  if (!user) return <Landing />;
   const sp = await searchParams;
   const { account, client, thread } = sp;
   const filter: Filter = sp.f === "unread" || sp.f === "reply" ? sp.f : "all";
@@ -116,6 +116,9 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
         <Link href="/approvals" className={navItem(false)}><Icon name="check" /> Approvals {pending ? <span className="ml-auto rounded-full bg-amber-500 px-1.5 text-[11px] font-semibold text-white">{pending}</span> : null}</Link>
         <Link href="/connect-ai" className={navItem(false)}><Icon name="spark" /> Connect your AI</Link>
         <Link href="/settings" className={navItem(false)}><Icon name="settings" /> Accounts &amp; settings</Link>
+        <form action="/auth/signout" method="post">
+          <button className={`${navItem(false)} w-full`} title={user.email ?? undefined}><Icon name="back" /> Sign out <span className="ml-auto max-w-28 truncate text-[11px] text-neutral-400">{user.email}</span></button>
+        </form>
       </nav>
     </div>
   );
@@ -271,6 +274,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   return (
     <Shell sidebar={sidebar} initialCollapsed={collapsed}>
       <AutoSync enabled={accounts.some((a) => a.status === "connected" || a.status === "error")} lastSyncedAt={lastSynced} />
+      {sp.notice === "password-updated" && <p className="bg-emerald-50 px-4 py-2 text-center text-sm text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200">Your password was updated.</p>}
       <header className={`${open ? "hidden md:flex" : "flex"} items-center gap-2 border-b border-neutral-200/70 bg-neutral-100/80 px-3 py-2 backdrop-blur dark:border-neutral-800 dark:bg-neutral-950/80 md:px-4`}>
         <MenuButton />
         <div className="min-w-0 shrink">

@@ -10,6 +10,8 @@ Two production deploys **failed** because the `CRON_SECRET` value in Vercel cont
 
 ## 1. Things only you can do
 
+- [ ] **(you) Sign-in setup in Supabase**: follow `docs/AUTH_SETUP.md` (redirect URL, email templates with codes, SMTP; optional Google/Slack sign-in).
+
 - [x] **Database migration `0004`**: applied via SQL Editor on 2026-11-12 and verified (client_rules table + RLS, policy and index advisor warnings cleared).
   ~~Approve database migration `0004`~~ (file: `supabase/migrations/0004_perf_and_client_rules.sql`).
   It adds the `client_rules` table (needed for automatic client tagging), indexes, and faster security policies.
@@ -55,8 +57,18 @@ Two production deploys **failed** because the `CRON_SECRET` value in Vercel cont
 - [ ] Sidebar → **Connect your AI**: copy the server URL; follow the ChatGPT / Gemini / Grok steps (plan restrictions apply).
 - [ ] For tools without sign-in (Cursor, Grok API, DeepSeek harness): create an **access key**, use `Authorization: Bearer <key>`, and revoke it when done.
 
+### New: accounts and sign-in (Nov 13 update)
+- [ ] Signed out, the homepage shows the product page with **Get started** and **Sign in**.
+- [ ] **Sign up** with email + password → a 6-digit code arrives → enter it → you're in. (Or tap the link in the email, on any device.)
+- [ ] Sign out (bottom of the sidebar) → **Sign in** with password. You stay signed in across days now; no more repeated email links.
+- [ ] **Email code** tab: sign in with a code instead of a password.
+- [ ] **Forgot password?** → code → choose a new password.
+- [ ] Wrong password shows a clear message and keeps your email filled in.
+- [ ] After enabling Google in Supabase: **Continue with Google** appears and works.
+- [ ] Your existing account: use **Forgot password?** once to set a password for it.
+
 ### Claude connector
-- [ ] Claude → Settings → Connectors → Add custom connector → `https://unified-box-eight.vercel.app/api/mcp`.
+- [ ] Sidebar → **Connect your AI** → **Connect to Claude**: Claude opens with Unified Box pre-filled → Add → approve.
 - [ ] You land on the **Connect Claude** screen listing what it can and cannot do. Approve.
 - [ ] Ask: "List my connected accounts", "What needs a reply?", "Search for invoices", "Give me a digest of the last 24 hours".
 - [ ] Settings → **Connected apps → Revoke**. Claude loses access immediately.

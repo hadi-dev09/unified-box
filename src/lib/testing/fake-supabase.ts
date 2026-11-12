@@ -159,16 +159,61 @@ class Query implements PromiseLike<Result> {
   }
 }
 
+type AuthUser = { id: string; email: string; password: string; confirmed: boolean };
+const authErr = (message: string) => ({ data: { user: null, session: null }, error: { message } });
+
 export class FakeDb {
   tables: Record<string, Row[]> = {};
   user: { id: string; email: string } | null = null;
+  authUsers: AuthUser[] = [];
+  authLog: { method: string; args: any }[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
   rows(t: string): Row[] { return (this.tables[t] ??= []); }
   from(t: string) { return new Query(this, t); }
-  reset() { this.tables = {}; this.user = null; }
+  reset() { this.tables = {}; this.user = null; this.authUsers = []; this.authLog = []; }
+  private log(method: string, args: unknown) { this.authLog.push({ method, args }); }
+  private find(email: string) { return this.authUsers.find((u) => u.email === email.toLowerCase()); }
   auth = {
     getUser: async () => ({ data: { user: this.user }, error: null }),
-    exchangeCodeForSession: async () => ({ data: {}, error: null }),
-    signInWithOtp: async () => ({ data: {}, error: null }),
+    exchangeCodeForSession: async (code: string) => { this.log("exchangeCodeForSession", code); return code === "bad" ? authErr("invalid flow state") : { data: {}, error: null }; },
+    signInWithPassword: async (a: { email: string; password: string }) => {
+      this.log("signInWithPassword", a);
+      const u = this.find(a.email);
+      if (!u || u.password !== a.password) return authErr("Invalid login credentials");
+      if (!u.confirmed) return authErr("Email not confirmed");
+      this.user = { id: u.id, email: u.email };
+      return { data: { user: this.user, session: {} }, error: null };
+    },
+    signUp: async (a: { email: string; password: string; options?: unknown }) => {
+      this.log("signUp", a);
+      if (!this.find(a.email)) this.authUsers.push({ id: randomUUID(), email: a.email.toLowerCase(), password: a.password, confirmed: false });
+      return { data: { user: { id: "obfuscated" }, session: null }, error: null };
+    },
+    signInWithOtp: async (a: { email: string; options?: { shouldCreateUser?: boolean } }) => {
+      this.log("signInWithOtp", a);
+      if (a.options?.shouldCreateUser === false && !this.find(a.email)) return authErr("Signups not allowed for otp");
+      return { data: {}, error: null };
+    },
+    verifyOtp: async (a: { email?: string; token?: string; token_hash?: string; type: string }) => {
+      this.log("verifyOtp", a);
+      if (a.token !== "123456" && a.token_hash !== "good-hash") return authErr("Token has expired or is invalid");
+      const u = a.email ? this.find(a.email) : this.authUsers[0];
+      if (u) { u.confirmed = true; this.user = { id: u.id, email: u.email }; }
+      return { data: { session: {} }, error: null };
+    },
+    resend: async (a: unknown) => { this.log("resend", a); return { data: {}, error: null }; },
+    resetPasswordForEmail: async (email: string, opts: unknown) => { this.log("resetPasswordForEmail", { email, opts }); return { data: {}, error: null }; },
+    updateUser: async (a: { password?: string }) => {
+      this.log("updateUser", a);
+      if (!this.user) return authErr("Auth session missing!");
+      const u = this.find(this.user.email);
+      if (u && a.password) u.password = a.password;
+      return { data: { user: this.user }, error: null };
+    },
+    signOut: async () => { this.log("signOut", null); this.user = null; return { error: null }; },
+    signInWithOAuth: async (a: { provider: string; options: { redirectTo: string } }) => {
+      this.log("signInWithOAuth", a);
+      return { data: { url: `https://fake.supabase.co/auth/v1/authorize?provider=${a.provider}&redirect_to=${encodeURIComponent(a.options.redirectTo)}` }, error: null };
+    },
   };
 }
 
