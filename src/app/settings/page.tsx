@@ -94,7 +94,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
       <p className="mb-2 text-sm text-neutral-500">Read-only, signed in as you, so you see exactly what you can see in Slack. In client workspaces an admin may need to approve the app.</p>
       {slackConfigured()
         ? <a className={`${btn} inline-block`} href="/api/connect/slack">Connect a Slack workspace</a>
-        : <p className="rounded bg-neutral-100 p-3 text-sm dark:bg-neutral-900">Slack isn&apos;t set up yet. Create the Slack app (about 5 minutes, steps in CHECKLIST.md) and add its keys in Vercel.</p>}
+        : <p className="rounded-xl bg-neutral-100 p-3 text-sm text-neutral-600 dark:bg-neutral-900 dark:text-neutral-400">Slack connections are coming soon.</p>}
       <h2 className="mt-6 font-medium">Connected</h2>
       <ul className="mt-2 space-y-2 text-sm">
         {(accounts ?? []).length === 0 && <li className="text-neutral-500">No accounts yet. Connect one above.</li>}
