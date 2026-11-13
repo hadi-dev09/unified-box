@@ -97,12 +97,18 @@ function findPart(p: Part, mime: string): string {
   return "";
 }
 
-/** Prefer text/plain; many newsletters and system emails are HTML-only, so fall back to converting HTML. */
+/**
+ * Prefer text/plain, but fall back to the HTML version when it's missing, or when the HTML has web links the plain
+ * version dropped (common for "Confirm" / "Reset password" buttons). HTML is converted to text with [label](url) links.
+ */
 function bodyText(p: Part): string {
   const plain = findPart(p, "text/plain").trim();
-  if (plain) return plain;
   const html = findPart(p, "text/html");
-  return html ? htmlToText(html) : "";
+  if (!html) return plain;
+  if (!plain) return htmlToText(html);
+  const links = [...html.matchAll(/href\s*=\s*["'](https?:\/\/[^"'\s]+)["']/gi)].map((m) => decodeEntities(m[1]));
+  const missing = links.some((u) => !plain.includes(u));
+  return missing ? htmlToText(html) : plain;
 }
 
 const header = (p: Part, n: string) => p.headers?.find((h) => h.name.toLowerCase() === n.toLowerCase())?.value ?? "";

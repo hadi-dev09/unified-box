@@ -250,6 +250,8 @@ test("sync: HTML-only mail gets readable bodies; newsletters don't need replies;
     n1: gm("n1", { from: "Deals <deals@shop.com>", subject: "70% off", html: "<style>x{}</style><p>Big&nbsp;sale &amp; more</p><a href='https://x'>Shop</a>", ts: 1_700_000_100_000, labels: ["CATEGORY_PROMOTIONS"], extra: [["List-Unsubscribe", "<mailto:u@shop.com>"]], snippet: "you&#39;ve won" }),
     s1: gm("s1", { from: "Supabase Auth <noreply@mail.app.supabase.io>", subject: "Your sign-in link", html: "<p>Follow the link</p>", ts: 1_700_000_200_000 }),
     o1: gm("o1", { from: "A <a@example.com>", subject: "My own mail", text: "Sent by me", ts: 1_700_000_300_000 }),
+    r1: gm("r1", { from: "Auth <noreply@auth.io>", subject: "Reset", text: "Reset password\nIgnore if not you", html: '<p>Reset</p><a href="https://auth.io/verify?token=abc&amp;type=recovery">Reset password</a>', ts: 1_700_000_400_000 }),
+    k1: gm("k1", { from: "Bob <bob@x.io>", subject: "Doc", text: "See https://docs.x.io/a", html: '<a href="https://docs.x.io/a">See doc</a>', ts: 1_700_000_500_000 }),
   };
   const net = stubFetch((c) => {
     if (c.url.includes("/messages?")) return { messages: Object.keys(msgs).map((id) => ({ id })) };
@@ -258,11 +260,13 @@ test("sync: HTML-only mail gets readable bodies; newsletters don't need replies;
   });
   try {
     const res = await syncAccount(acct);
-    assert.equal(res.synced, 4);
+    assert.equal(res.synced, 6);
     const body = (ext: string) => db.rows("messages").find((m) => m.external_id === ext)!.body_text;
     assert.equal(body("h1"), "Can you send the report?");
     assert.equal(body("n1"), "Big sale & more\n[Shop](https://x)");
     assert.equal(body("s1"), "Follow the link");
+    assert.match(body("r1"), /\[Reset password\]\(https:\/\/auth\.io\/verify\?token=abc&type=recovery\)/, "plain part lacked the link -> HTML used");
+    assert.equal(body("k1"), "See https://docs.x.io/a", "plain part already has the link -> plain kept");
     const t = (ext: string) => db.rows("threads").find((x) => x.external_id === `t-${ext}`)!;
     assert.equal(t("h1").needs_reply, true);
     assert.equal(t("h1").unread, true);
@@ -275,8 +279,8 @@ test("sync: HTML-only mail gets readable bodies; newsletters don't need replies;
     assert.equal(db.rows("accounts")[0].status, "connected");
     // re-sync is idempotent
     await syncAccount(acct);
-    assert.equal(db.rows("messages").length, 4);
-    assert.equal(db.rows("threads").length, 4);
+    assert.equal(db.rows("messages").length, 6);
+    assert.equal(db.rows("threads").length, 6);
   } finally { net.restore(); }
 });
 
