@@ -87,7 +87,7 @@ test("forgot + reset password", async () => {
 test("resend code for each flow", async () => {
   for (const type of ["signup", "email", "recovery"]) {
     const r = await run(actions.resendCode, { email: "ok@x.com", type, next: "/" });
-    assert.match(String(r.state?.ok), /new code/);
+    assert.match(String(r.state?.ok), /Sent/);
   }
   assert.deepEqual(db.authLog.map((l) => l.method), ["resend", "signInWithOtp", "resetPasswordForEmail"]);
 });

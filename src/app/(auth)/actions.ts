@@ -69,7 +69,7 @@ export async function resendCode(_: FormState, f: FormData): Promise<FormState> 
       : await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: false, emailRedirectTo: callback(next) } });
   // Same answer whether or not the account exists (no account enumeration); only surface rate limits.
   if (error && /rate limit|too many|security purposes/i.test(error.message)) return { error: friendlyAuthError(error.message) };
-  return { ok: "A new code is on its way. Check your inbox (and spam)." };
+  return { ok: "Sent. Check your inbox (and spam). Emails are limited to a few per hour for now." };
 }
 
 export async function forgotPassword(_: FormState, f: FormData): Promise<FormState> {

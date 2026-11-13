@@ -3,6 +3,10 @@
 The app code for password sign-in, sign-up, email codes, forgot/reset password and Google/Slack sign-in is done.
 These settings live in your Supabase dashboard, so they need you. Project: **unified-box**.
 
+> **Status (Nov 13):** steps 1 and 2 are done via the Management API (redirect URL `/**`, min password 8, 6-digit codes).
+> Step 3 (email templates) is **blocked by Supabase on the free plan until custom SMTP (step 4) is configured**.
+> Until then emails contain a link only (no code), which must be opened in the same browser. After setting up SMTP, do step 3.
+
 ## 1. URL configuration (required)
 Authentication → URL Configuration → **Redirect URLs** → Add:
 ```
@@ -43,7 +47,7 @@ These make every email contain a 6-digit code *and* a link that works on any dev
 <p>If you didn't ask for this, you can ignore this email.</p>
 ```
 
-## 4. Email sending limits (strongly recommended)
+## 4. Custom SMTP (required for step 3, and to lift the 2-emails-per-hour limit)
 Supabase's built-in email sender only allows a few emails per hour, so sign-up and reset codes will fail beyond that.
 Authentication → Emails → **SMTP Settings** → enable custom SMTP with a provider such as Resend, Postmark or SendGrid.
 

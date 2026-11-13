@@ -58,7 +58,7 @@ export function LoginForm({ next, initialEmail = "" }: { next: string; initialEm
   );
   return (
     <div className="space-y-4">
-      <div className="flex gap-1 rounded-xl bg-neutral-100 p-1 dark:bg-neutral-950">{tab("password", "Password")}{tab("code", "Email code")}</div>
+      <div className="flex gap-1 rounded-xl bg-neutral-100 p-1 dark:bg-neutral-950">{tab("password", "Password")}{tab("code", "Email link")}</div>
       {mode === "password" ? (
         <form action={pwAction} className="space-y-4">
           <input type="hidden" name="next" value={next} />
@@ -73,9 +73,9 @@ export function LoginForm({ next, initialEmail = "" }: { next: string; initialEm
         <form action={codeAction} className="space-y-4">
           <input type="hidden" name="next" value={next} />
           <Field label="Email"><EmailInput value={email} onChange={setEmail} /></Field>
-          <p className="text-xs text-neutral-500">We&apos;ll email you a 6-digit code. No password needed.</p>
+          <p className="text-xs text-neutral-500">We&apos;ll email you a one-time sign-in link. No password needed.</p>
           <Message state={codeState} />
-          <Submit>Email me a code</Submit>
+          <Submit>Email me a sign-in link</Submit>
         </form>
       )}
     </div>
@@ -112,7 +112,7 @@ export function VerifyForm({ email, type, next }: { email: string; type: string;
         <input type="hidden" name="email" value={email} />
         <input type="hidden" name="type" value={type} />
         <input type="hidden" name="next" value={next} />
-        <Field label="Verification code">
+        <Field label="Code (if your email has one)">
           <input name="code" required inputMode="numeric" autoComplete="one-time-code" pattern="[0-9 ]{6,12}" maxLength={12} placeholder="123456" autoFocus
             className={`${input} text-center font-mono text-2xl tracking-[0.5em]`} />
         </Field>
@@ -132,7 +132,7 @@ export function VerifyForm({ email, type, next }: { email: string; type: string;
 
 function ResendButton() {
   const { pending } = useFormStatus();
-  return <button disabled={pending} className="text-sm text-neutral-600 underline-offset-4 hover:underline disabled:opacity-50 dark:text-neutral-400">{pending ? "Sending…" : "Didn't get it? Send a new code"}</button>;
+  return <button disabled={pending} className="text-sm text-neutral-600 underline-offset-4 hover:underline disabled:opacity-50 dark:text-neutral-400">{pending ? "Sending…" : "Didn't get it? Send again"}</button>;
 }
 
 export function ForgotForm({ initialEmail = "" }: { initialEmail?: string }) {
@@ -142,7 +142,7 @@ export function ForgotForm({ initialEmail = "" }: { initialEmail?: string }) {
     <form action={action} className="space-y-4">
       <Field label="Email"><EmailInput value={email} onChange={setEmail} /></Field>
       <Message state={state} />
-      <Submit>Send reset code</Submit>
+      <Submit>Send reset link</Submit>
     </form>
   );
 }
