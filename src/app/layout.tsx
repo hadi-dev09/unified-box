@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { LinkErrorHandler } from "./link-error";
 
 export const metadata: Metadata = {
   title: "Unified Box",
@@ -13,7 +14,7 @@ export const viewport: Viewport = { width: "device-width", initialScale: 1, them
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className="antialiased">{children}</body>
+      <body className="antialiased"><LinkErrorHandler />{children}</body>
     </html>
   );
 }
