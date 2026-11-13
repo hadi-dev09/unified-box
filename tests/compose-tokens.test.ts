@@ -157,7 +157,7 @@ test("MCP: version negotiation, annotations, batching, CORS, OIDC discovery alia
   const tl = (await (await rpc(token!, { jsonrpc: "2.0", id: 2, method: "tools/list" })).json()).result.tools;
   for (const t of tl) assert.equal(typeof t.annotations.readOnlyHint, "boolean", t.name);
   assert.equal(tl.find((t: { name: string }) => t.name === "draft_reply").annotations.readOnlyHint, false);
-  assert.equal(tl.filter((t: { annotations: { readOnlyHint: boolean } }) => t.annotations.readOnlyHint).length, 5);
+  assert.equal(tl.filter((t: { annotations: { readOnlyHint: boolean } }) => t.annotations.readOnlyHint).length, 6);
 
   const batch = await (await rpc(token!, [{ jsonrpc: "2.0", id: 1, method: "ping" }, { jsonrpc: "2.0", method: "notifications/initialized" }, { jsonrpc: "2.0", id: 2, method: "nope" }])).json();
   assert.equal(batch.length, 2);
@@ -195,7 +195,7 @@ test("MCP: works with the official MCP TypeScript SDK client (Streamable HTTP)",
     await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/api/mcp`), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
     assert.equal(client.getServerVersion()?.name, "unified-box");
     const { tools } = await client.listTools();
-    assert.equal(tools.length, 6);
+    assert.equal(tools.length, 7);
     const res = await client.callTool({ name: "list_threads", arguments: { limit: 5 } });
     const out = JSON.parse((res.content as { text: string }[])[0].text);
     assert.equal(out.threads.length, 1);
@@ -204,4 +204,22 @@ test("MCP: works with the official MCP TypeScript SDK client (Streamable HTTP)",
     await client.close().catch(() => {});
     server.close();
   }
+});
+
+test("MCP sync_inbox: syncs only the token user's inboxes and is throttled to once a minute", async () => {
+  seedThread(A); seedThread(B);
+  db.rows("accounts").forEach((a) => (a.last_synced_at = null));
+  const { token } = await createApiToken(A.id, "t");
+  const net = stubFetch((c) => (c.url.includes("/messages?") ? { messages: [] } : undefined));
+  try {
+    const call = async () => JSON.parse((await (await rpc(token!, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "sync_inbox", arguments: {} } })).json()).result.content[0].text);
+    const first = await call();
+    assert.equal(first.synced.length, 1);
+    assert.equal(first.synced[0].inbox, A.email);
+    assert.equal(net.calls.length, 1, "only A's Gmail was contacted");
+    const second = await call();
+    assert.match(second.note, /less than a minute/);
+    assert.equal(net.calls.length, 1, "throttled");
+    assert.equal(db.rows("accounts").find((a) => a.user_id === B.id)!.last_synced_at, null, "B untouched");
+  } finally { net.restore(); }
 });

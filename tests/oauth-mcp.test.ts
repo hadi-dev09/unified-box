@@ -148,8 +148,8 @@ test("MCP: protocol basics and the tool surface has no send/delete", async () =>
   assert.equal((await rpc(tok, "notifications/initialized", undefined, true)).res.status, 202);
   const list = await rpc(tok, "tools/list");
   const names: string[] = list.body.result.tools.map((t: { name: string }) => t.name);
-  assert.deepEqual(names.sort(), ["daily_digest", "draft_reply", "get_thread", "list_accounts", "list_threads", "search_messages"]);
-  assert.ok(!names.some((n) => /send|delete|remove|archive/.test(n)));
+  assert.deepEqual(names.sort(), ["daily_digest", "draft_reply", "get_thread", "list_accounts", "list_threads", "search_messages", "sync_inbox"]);
+  assert.ok(!names.some((n) => /send|delete|remove|archive/.test(n.replace("sync_inbox", ""))));
   for (const t of list.body.result.tools) assert.equal(t.inputSchema.type, "object");
   assert.equal((await rpc(tok, "nope")).body.error.code, -32601);
 });

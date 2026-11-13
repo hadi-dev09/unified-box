@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { replyRecipients } from "./reply";
+import { syncAccount } from "./sync";
 import { supabaseAdmin } from "./supabase/admin";
 
 // Message bodies are written by third parties. Tell the model to treat them as data.
@@ -22,6 +23,21 @@ function def<S extends z.ZodObject<z.ZodRawShape>>(
 }
 
 export const tools: Tool[] = [
+  def("sync_inbox", "Fetch new messages from the user's connected inboxes now (read-only; at most once a minute). Use before reading if the user expects very recent mail.",
+    z.object({}), async (uid) => {
+      const db = supabaseAdmin();
+      const { data: accts } = await db.from("accounts").select("id, display_name, status, last_synced_at").eq("user_id", uid).in("status", ["connected", "error"]);
+      const fresh = (accts ?? []).filter((a: { last_synced_at: string | null }) => a.last_synced_at && Date.now() - new Date(a.last_synced_at).getTime() < 60_000);
+      if (accts?.length && fresh.length === accts.length) return { synced: [], note: "Synced less than a minute ago; nothing to do." };
+      const results = [];
+      for (const a of (accts ?? []) as { id: string; display_name: string; last_synced_at: string | null }[]) {
+        if (a.last_synced_at && Date.now() - new Date(a.last_synced_at).getTime() < 60_000) continue;
+        const r = await syncAccount(a.id);
+        results.push({ inbox: a.display_name, new_or_updated: r.synced, ...(r.error ? { error: r.error } : {}), ...(r.note ? { note: r.note } : {}) });
+      }
+      return { synced: results };
+    }),
+
   def("list_accounts", "List connected inboxes with their type and health status.", z.object({}), async (uid) => {
     const { data } = await supabaseAdmin().from("accounts").select("id, provider, account_type, display_name, status, status_detail, can_send, last_synced_at").eq("user_id", uid);
     return data;
