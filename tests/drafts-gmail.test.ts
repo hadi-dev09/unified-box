@@ -261,7 +261,7 @@ test("sync: HTML-only mail gets readable bodies; newsletters don't need replies;
     assert.equal(res.synced, 4);
     const body = (ext: string) => db.rows("messages").find((m) => m.external_id === ext)!.body_text;
     assert.equal(body("h1"), "Can you send the report?");
-    assert.equal(body("n1"), "Big sale & more\nShop");
+    assert.equal(body("n1"), "Big sale & more\n[Shop](https://x)");
     assert.equal(body("s1"), "Follow the link");
     const t = (ext: string) => db.rows("threads").find((x) => x.external_id === `t-${ext}`)!;
     assert.equal(t("h1").needs_reply, true);

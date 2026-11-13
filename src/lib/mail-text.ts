@@ -24,6 +24,11 @@ export function htmlToText(html: string): string {
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/(p|div|tr|li|h[1-6]|table|blockquote|section)>/gi, "\n")
     .replace(/<li\b[^>]*>/gi, "• ")
+    // Keep web links as [label](url) so buttons like "Reset password" stay usable (rendered as short links).
+    .replace(/<a\b[^>]*?\bhref\s*=\s*["'](https?:\/\/[^"'\s]+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_m, href: string, inner: string) => {
+      const label = inner.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+      return label && label !== href ? `[${label.replace(/[[\]]/g, "")}](${href})` : ` ${href} `;
+    })
     .replace(/<[^>]*>/g, "");
   return decodeEntities(s)
     .replace(/[ \t ​-‍⁠﻿͏]+/g, " ")

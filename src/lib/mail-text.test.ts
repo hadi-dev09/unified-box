@@ -15,7 +15,7 @@ test("htmlToText strips tags/styles/scripts and keeps structure", () => {
   assert.ok(!/alert|color:red|<|>/.test(t), t);
   assert.match(t, /Hello world/);
   assert.match(t, /• One\n• Two/);
-  assert.match(t, /Click\nBye|Click\s*Bye/);
+  assert.match(t, /\[Click\]\(https:\/\/t\.co\/x\)\s*Bye/);
 });
 
 test("htmlToText collapses blank runs", () => {
@@ -48,4 +48,12 @@ test("safeNext blocks open redirects", () => {
   assert.equal(safeNext("https://evil.com"), "/");
   assert.equal(safeNext("/\\evil.com"), "/");
   assert.equal(safeNext(null), "/");
+});
+
+test("htmlToText keeps web links (decoded) and ignores mailto/javascript", () => {
+  const t = htmlToText(`<a href="https://app.example/reset?token=a&amp;type=recovery"><b>Reset password</b></a> <a href="mailto:x@y.z">Mail</a> <a href="javascript:alert(1)">bad</a> <a href="https://x.io/p">https://x.io/p</a>`);
+  assert.match(t, /\[Reset password\]\(https:\/\/app\.example\/reset\?token=a&type=recovery\)/);
+  assert.match(t, /Mail/);
+  assert.doesNotMatch(t, /mailto|javascript/);
+  assert.match(t, /https:\/\/x\.io\/p/);
 });
