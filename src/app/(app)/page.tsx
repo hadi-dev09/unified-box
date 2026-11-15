@@ -5,6 +5,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { assignClientAction } from "../actions";
 import { Landing } from "../landing";
 import { Composer, type Preset } from "../composer";
+import { DraftActions } from "./approvals/draft-actions";
 import { LocalTime } from "../local-time";
 import { MarkSeen } from "../mark-seen";
 import { MessageBody } from "../message-body";
@@ -34,12 +35,13 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   if (q) tq = tq.or(`subject.ilike.%${q}%,snippet.ilike.%${q}%,last_from.ilike.%${q}%`);
   const threads = ((await tq).data ?? []) as unknown as Thread[];
 
-  const [{ data: msgRows }, { data: cur }] = thread
+  const [{ data: msgRows }, { data: cur }, { data: aiDrafts }] = thread
     ? await Promise.all([
         sb.from("messages").select("id, from_name, from_addr, to_addrs, cc_addrs, sent_at, is_outgoing, body_text, subject").eq("thread_id", thread).order("sent_at"),
         sb.from("threads").select("id, subject, client_id, unread, external_id, account_id").eq("id", thread).maybeSingle(),
+        sb.from("drafts").select("id, subject, body, to_addrs, cc_addrs, created_by").eq("thread_id", thread).eq("status", "pending").order("created_at"),
       ])
-    : [{ data: null }, { data: null }];
+    : [{ data: null }, { data: null }, { data: null }];
   const messages = (msgRows ?? []) as (Msg & { id: string })[];
 
   const qs = (o: Partial<Search>) => {
@@ -122,6 +124,15 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
                 </details>
               );
             })}
+            {((aiDrafts ?? []) as { id: string; subject: string; body: string; to_addrs: string[]; cc_addrs: string[] | null; created_by: string }[]).map((d) => (
+              <div key={d.id} className="rounded-2xl border border-violet-200 bg-violet-50/60 p-4 dark:border-violet-900/60 dark:bg-violet-950/20">
+                <p className="mb-1 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-800 dark:text-violet-200">
+                  <Icon name="spark" className="h-3.5 w-3.5" /> {d.created_by === "claude" ? "Draft from your AI assistant" : "Your saved draft"} · not sent yet
+                </p>
+                <p className="mb-2 text-xs text-neutral-500">To {[...d.to_addrs, ...(d.cc_addrs ?? [])].join(", ")}</p>
+                <DraftActions id={d.id} subject={d.subject} body={d.body} />
+              </div>
+            ))}
             <div className="pt-2">
               <Composer
                 threadId={cur.id}

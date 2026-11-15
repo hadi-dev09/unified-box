@@ -106,6 +106,6 @@ export const tools: Tool[] = [
       const { data: d, error } = await db.from("drafts").insert({ user_id: uid, account_id: t.account_id, thread_id: t.id, mode, to_addrs: to, cc_addrs: cc, subject, body: a.body, created_by: "claude" }).select("id").single();
       if (error) return { error: error.message };
       await db.from("audit_log").insert({ user_id: uid, actor: "claude", action: "draft.created", target: d.id, meta: { to, cc } });
-      return { draft_id: d.id, status: "pending", to, cc, message: "Draft saved. Ask the user to review and approve it in the Unified Box app (Approvals). It has not been sent." };
+      return { draft_id: d.id, status: "pending", to, cc, message: "Draft saved. It has NOT been sent. The user can review, edit and send it in Unified Box (inside the conversation, or under AI drafts)." };
     }),
 ];

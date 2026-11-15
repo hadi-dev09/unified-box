@@ -64,8 +64,8 @@ export function SidebarNav({ accounts, clients, perAcct, perClient, unreadTotal,
         </div>
       )}
       <nav className="mt-auto space-y-0.5 border-t border-neutral-200/70 pt-3 dark:border-neutral-800">
-        <Link href="/approvals" className={item(path.startsWith("/approvals"))}><Icon name="check" /> Approvals {pending ? <span className="ml-auto rounded-full bg-amber-500 px-1.5 text-[11px] font-semibold text-white">{pending}</span> : null}</Link>
-        <Link href="/connect-ai" className={item(path.startsWith("/connect-ai"))}><Icon name="spark" /> Connect your AI</Link>
+        <Link href="/approvals" className={item(path.startsWith("/approvals"))}><Icon name="spark" /> AI drafts {pending ? <span className="ml-auto rounded-full bg-amber-500 px-1.5 text-[11px] font-semibold text-white">{pending}</span> : null}</Link>
+        <Link href="/connect-ai" className={item(path.startsWith("/connect-ai"))}><Icon name="plug" /> Connect your AI</Link>
         <Link href="/settings" className={item(path.startsWith("/settings"))}><Icon name="settings" /> Accounts &amp; settings</Link>
         <form action="/auth/signout" method="post">
           <button className={`${item(false)} w-full`} title={email}><Icon name="logout" /> Sign out <span className="ml-auto max-w-28 truncate text-[11px] text-neutral-400">{email}</span></button>

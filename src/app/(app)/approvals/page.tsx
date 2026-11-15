@@ -10,14 +10,14 @@ export default async function Approvals() {
   if (!user) redirect("/login");
   const { data: drafts } = await sb.from("drafts").select("id, to_addrs, subject, body, status, created_by, error, accounts(display_name)").order("created_at", { ascending: false }).limit(50);
   return (
-    <PageFrame title="Approvals">
+    <PageFrame title="AI drafts">
     <main className="mx-auto max-w-2xl px-4 py-6 md:py-8">
-      <h1 className="my-3 text-2xl font-semibold tracking-tight">Approvals</h1>
-      <p className="mb-4 text-sm text-neutral-500">Nothing is sent until you approve it here.</p>
-      {(drafts ?? []).length === 0 && <p className="text-sm text-neutral-500">No drafts.</p>}
+      <h1 className="my-3 text-2xl font-semibold tracking-tight">AI drafts</h1>
+      <p className="mb-4 text-sm text-neutral-500">Replies written by your AI assistant (Claude, ChatGPT, …) wait here. Nothing an AI writes is sent until you approve it. Replies you write yourself send immediately.</p>
+      {(drafts ?? []).length === 0 && <p className="text-sm text-neutral-500">No AI drafts. Ask your assistant to draft a reply and it will appear here, and inside the conversation.</p>}
       {(drafts ?? []).map((d) => (
         <article key={d.id} className="mb-3 rounded-xl bg-white p-3 ring-1 ring-neutral-200/70 dark:bg-neutral-900 dark:ring-neutral-800">
-          <div className="text-xs text-neutral-500">From {(d.accounts as unknown as { display_name: string } | null)?.display_name} → {d.to_addrs.join(", ")} · by {d.created_by} · {d.status}</div>
+          <div className="text-xs text-neutral-500">From {(d.accounts as unknown as { display_name: string } | null)?.display_name} → {d.to_addrs.join(", ")} · {d.created_by === "claude" ? "written by AI" : "written by you"} · {d.status}</div>
           {d.status === "pending" ? (
             <DraftActions id={d.id} subject={d.subject} body={d.body} />
           ) : (

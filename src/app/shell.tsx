@@ -60,7 +60,7 @@ export function SyncStatus() {
   return <>{useContext(Ctx).status}</>;
 }
 
-/** Header + scroll area for secondary pages (Approvals, Settings, Connect your AI). */
+/** Header + scroll area for secondary pages (AI drafts, Settings, Connect your AI). */
 export function PageFrame({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">

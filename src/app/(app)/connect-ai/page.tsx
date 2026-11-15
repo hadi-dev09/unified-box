@@ -79,7 +79,7 @@ export default async function ConnectAI() {
     <main className="mx-auto max-w-3xl space-y-5 px-4 py-6 md:py-8">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Connect your AI</h1>
-        <p className="mt-1 text-sm text-neutral-500">Pick your assistant and click Connect. You&apos;ll approve once on a Unified Box screen. Assistants can read your inboxes and draft replies, but never send or delete: drafts wait for you in Approvals.</p>
+        <p className="mt-1 text-sm text-neutral-500">Pick your assistant and click Connect. You&apos;ll approve once on a Unified Box screen. Assistants can read your inboxes and draft replies, but never send or delete: their drafts wait for your OK in AI drafts.</p>
       </div>
 
       <section className={card}>

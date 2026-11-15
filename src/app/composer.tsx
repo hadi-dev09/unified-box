@@ -31,17 +31,19 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
     setTimeout(() => { bodyRef.current?.focus(); bodyRef.current?.setSelectionRange(0, 0); bodyRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, 30);
   }
 
-  async function submit(send: boolean) {
+  async function submit() {
     const t = parseAddressField(to), c = parseAddressField(cc);
     if (t.invalid.length || c.invalid.length) return setErr(`Not a valid email: ${[...t.invalid, ...c.invalid].join(", ")}`);
     if (!t.valid.length) return setErr("Add at least one recipient");
     if (!body.trim()) return setErr("Write a message first");
     setBusy(true); setErr(null);
     try {
-      const res = await fetch("/api/compose", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ thread_id: threadId, mode, to: t.valid, cc: c.valid, subject, body, send }) });
+      const res = await fetch("/api/compose", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ thread_id: threadId, mode, to: t.valid, cc: c.valid, subject, body, send: true }) });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) return setErr(j.error ?? `Failed (${res.status})`);
-      setDone(send ? "Sent" : "Saved to Approvals"); setMode(null); router.refresh();
+      setDone(`Sent to ${t.valid.slice(0, 2).join(", ")}${t.valid.length > 2 ? "…" : ""}`); setMode(null);
+      await fetch("/api/sync", { method: "POST" }).catch(() => {}); // pull the sent message into the conversation
+      router.refresh();
     } finally { setBusy(false); }
   }
 
@@ -62,7 +64,7 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
           {showReplyAll && <button className={btn} onClick={() => open("reply_all")}><Icon name="replyAll" /> Reply all</button>}
           <button className={btn} onClick={() => open("forward")}><Icon name="forward" /> Forward</button>
           {openHref && <a className={`${btn} ml-auto`} href={openHref} target="_blank" rel="noopener noreferrer" title="Open this conversation in Gmail"><Icon name="external" /> Gmail</a>}
-          {done && <span className="inline-flex items-center gap-1 text-sm text-emerald-600"><Icon name="check" /> {done}</span>}
+          {done && <span role="status" className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-sm font-medium text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"><Icon name="check" /> {done}</span>}
         </div>
       )}
 
@@ -74,7 +76,7 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
           </div>
           {!canSend && (
             <p className="mb-2 rounded-lg bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/60 dark:text-amber-200">
-              This inbox is connected <b>read-only</b>, so it can&apos;t send yet. You can save this to Approvals, or <a className="underline" href={reconnectHref}>reconnect it with sending</a>.
+              This inbox is connected <b>read-only</b>, so it can&apos;t send yet. <a className="font-semibold underline" href={reconnectHref}>Reconnect it with sending</a> (one click on Google&apos;s screen), then reply here.
             </p>
           )}
           <div className="space-y-2">
@@ -99,11 +101,10 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
           {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {canSend && (
-              <button disabled={busy} onClick={() => submit(true)} className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-700 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200">
+              <button disabled={busy} onClick={() => submit()} className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-700 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200">
                 {busy ? "Sending…" : "Send"}
               </button>
             )}
-            <button disabled={busy} onClick={() => submit(false)} className={btn}>Save to Approvals</button>
             <button disabled={busy} onClick={() => setMode(null)} className="px-2 text-sm text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200">Discard</button>
           </div>
         </div>

@@ -17,7 +17,8 @@ export function DraftActions({ id, subject, body }: { id: string; subject: strin
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify(action === "approve" && editing ? { action, subject: sub, body: text } : { action }),
       });
-      if (!res.ok) { const j = await res.json().catch(() => ({})); setErr(j.error ?? `Failed (${res.status})`); }
+      if (!res.ok) { const j = await res.json().catch(() => ({})); setErr(j.error ?? `Failed (${res.status})`); return; }
+      if (action === "approve") await fetch("/api/sync", { method: "POST" }).catch(() => {}); // show the sent reply in the thread
     } finally { setBusy(false); router.refresh(); }
   }
 
