@@ -49,7 +49,12 @@ export async function syncAccount(accountId: string): Promise<SyncResult> {
       const last = list[list.length - 1];
       const { data: prev } = await db.from("threads").select("id, last_message_at, seen_at").eq("account_id", accountId).eq("external_id", ext).maybeSingle();
       const isNewest = !prev || new Date(last.sentAt).getTime() >= new Date(prev.last_message_at).getTime();
-      const unread = (gmailUnread(ext) || list.some((m) => m.unread)) && !seenAfter(prev?.seen_at, last.sentAt);
+      // Unread only if Gmail says so AND the newest message isn't yours AND someone wrote after you last read it here.
+      const lastIncoming = [...list].reverse().find((m) => !m.outgoing)?.sentAt;
+      const mineIsNewest = isNewest && last.outgoing;
+      const unread = (gmailUnread(ext) || list.some((m) => m.unread && !m.outgoing))
+        && !mineIsNewest
+        && !(prev?.seen_at && (!lastIncoming || seenAfter(prev.seen_at, lastIncoming)));
       const { data: t, error } = await db.from("threads").upsert(
         {
           user_id: acct.user_id, account_id: accountId, external_id: ext, unread,
@@ -79,9 +84,9 @@ export async function syncAccount(accountId: string): Promise<SyncResult> {
     // Unread changes on threads that got no new message (read/unread elsewhere, e.g. on your phone).
     const untouched = [...threadIdsOf.keys()].filter((ext) => !byThread.has(ext));
     if (untouched.length) {
-      const { data: rows } = await db.from("threads").select("id, external_id, unread, seen_at, last_message_at").eq("account_id", accountId).in("external_id", untouched);
-      for (const r of (rows ?? []) as { id: string; external_id: string; unread: boolean; seen_at: string | null; last_message_at: string }[]) {
-        const want = gmailUnread(r.external_id) && !seenAfter(r.seen_at, r.last_message_at);
+      const { data: rows } = await db.from("threads").select("id, external_id, unread, seen_at, last_message_at, last_from").eq("account_id", accountId).in("external_id", untouched);
+      for (const r of (rows ?? []) as { id: string; external_id: string; unread: boolean; seen_at: string | null; last_message_at: string; last_from: string | null }[]) {
+        const want = gmailUnread(r.external_id) && r.last_from !== "You" && !seenAfter(r.seen_at, r.last_message_at);
         if (want !== r.unread) { await db.from("threads").update({ unread: want }).eq("id", r.id); changed = true; }
       }
     }

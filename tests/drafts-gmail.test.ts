@@ -438,3 +438,35 @@ test("sync: unread state follows Gmail's unread list, including mail read elsewh
     assert.equal(third.changed, false, "nothing changed -> no refresh needed");
   } finally { net.restore(); }
 });
+
+test("sync: replying makes a thread read; only new incoming mail makes it unread again", async () => {
+  const acct = seedAccount();
+  const inMsg = (id: string, ts: number) => ({ ...gm(id, { from: "Client <c@acme.com>", subject: "Q", text: "question", ts, labels: ["UNREAD"] }), threadId: "T" });
+  const outMsg = (id: string, ts: number) => ({ ...gm(id, { from: `Me <${A.email}>`, subject: "Re: Q", text: "answer", ts, labels: ["SENT"] }), threadId: "T" });
+  const msgs: Record<string, unknown> = { i1: inMsg("i1", 1_700_000_000_000) };
+  const net = stubFetch((c) => {
+    if (c.url.includes("/messages?")) {
+      const unreadOnly = decodeURIComponent(c.url).includes("is:unread");
+      return { messages: Object.keys(msgs).filter((id) => !unreadOnly || id.startsWith("i")).map((id) => ({ id, threadId: "T" })) };
+    }
+    const m = c.url.match(/\/messages\/(\w+)\?format=full/);
+    if (m) return msgs[m[1]];
+  });
+  const t = () => db.rows("threads").find((x) => x.external_id === "T")!;
+  try {
+    await syncAccount(acct);
+    assert.equal(t().unread, true);
+    // I open it in Unified Box, then reply (Gmail still flags the incoming message UNREAD)
+    t().seen_at = new Date(1_700_000_050_000).toISOString(); t().unread = false;
+    msgs.o1 = outMsg("o1", 1_700_000_100_000);
+    await syncAccount(acct);
+    assert.equal(t().unread, false, "my reply is newest -> read");
+    assert.equal(t().last_from, "You");
+    await syncAccount(acct);
+    assert.equal(t().unread, false, "stays read on later syncs");
+    // the client answers -> unread again
+    msgs.i2 = inMsg("i2", 1_700_000_200_000);
+    await syncAccount(acct);
+    assert.equal(t().unread, true, "new incoming mail -> unread");
+  } finally { net.restore(); }
+});
