@@ -120,36 +120,64 @@ export type GmailMsg = {
 
 const addrList = (v: string) => v.split(",").map((s) => parseFrom(s).addr).filter((a) => a.includes("@"));
 
-export async function recentMessages(accountId: string, selfEmail: string, days = 14, max = 50): Promise<GmailMsg[]> {
-  const list = await gfetch(accountId, `messages?maxResults=${max}&q=${encodeURIComponent(`newer_than:${days}d -in:spam -in:trash`)}`);
-  const out: GmailMsg[] = [];
-  for (const { id } of (list.messages ?? []) as { id: string }[]) {
-    const m = await gfetch(accountId, `messages/${id}?format=full`);
-    const from = parseFrom(header(m.payload, "From"));
-    out.push({
-      id: m.id,
-      threadId: m.threadId,
-      subject: header(m.payload, "Subject"),
-      fromName: from.name,
-      fromAddr: from.addr,
-      to: addrList(header(m.payload, "To")),
-      cc: addrList(header(m.payload, "Cc")),
-      messageId: header(m.payload, "Message-ID").trim(),
-      body: bodyText(m.payload).slice(0, 20_000),
-      sentAt: new Date(Number(m.internalDate)).toISOString(),
-      snippet: decodeEntities(m.snippet ?? ""),
-      unread: (m.labelIds ?? []).includes("UNREAD"),
-      outgoing: from.addr.toLowerCase() === selfEmail.toLowerCase(),
-      automated: looksAutomated({
-        labels: m.labelIds ?? [],
-        fromAddr: from.addr,
-        listUnsubscribe: header(m.payload, "List-Unsubscribe"),
-        precedence: header(m.payload, "Precedence"),
-        autoSubmitted: header(m.payload, "Auto-Submitted"),
-      }),
-    });
+/** Message ids (newest first) matching a Gmail search, following pages up to `max`. */
+export async function listIds(accountId: string, q: string, max = 100): Promise<{ id: string; threadId: string }[]> {
+  const out: { id: string; threadId: string }[] = [];
+  let page = "";
+  while (out.length < max) {
+    const n = Math.min(100, max - out.length);
+    const j = await gfetch(accountId, `messages?maxResults=${n}&q=${encodeURIComponent(q)}${page ? `&pageToken=${encodeURIComponent(page)}` : ""}`);
+    out.push(...((j.messages ?? []) as { id: string; threadId: string }[]));
+    page = j.nextPageToken ?? "";
+    if (!page) break;
   }
   return out;
+}
+
+/** Downloads and parses one message. */
+export async function getMessage(accountId: string, id: string, selfEmail: string): Promise<GmailMsg> {
+  const m = await gfetch(accountId, `messages/${id}?format=full`);
+  const from = parseFrom(header(m.payload, "From"));
+  return {
+    id: m.id,
+    threadId: m.threadId,
+    subject: header(m.payload, "Subject"),
+    fromName: from.name,
+    fromAddr: from.addr,
+    to: addrList(header(m.payload, "To")),
+    cc: addrList(header(m.payload, "Cc")),
+    messageId: header(m.payload, "Message-ID").trim(),
+    body: bodyText(m.payload).slice(0, 20_000),
+    sentAt: new Date(Number(m.internalDate)).toISOString(),
+    snippet: decodeEntities(m.snippet ?? ""),
+    unread: (m.labelIds ?? []).includes("UNREAD"),
+    outgoing: from.addr.toLowerCase() === selfEmail.toLowerCase(),
+    automated: looksAutomated({
+      labels: m.labelIds ?? [],
+      fromAddr: from.addr,
+      listUnsubscribe: header(m.payload, "List-Unsubscribe"),
+      precedence: header(m.payload, "Precedence"),
+      autoSubmitted: header(m.payload, "Auto-Submitted"),
+    }),
+  };
+}
+
+/** Runs `fn` over `items` with at most `limit` in flight. */
+export async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) { const k = i++; out[k] = await fn(items[k]); }
+  }));
+  return out;
+}
+
+export const WINDOW_QUERY = "newer_than:14d -in:spam -in:trash";
+
+/** Recent messages, fully parsed (kept for callers that want everything). */
+export async function recentMessages(accountId: string, selfEmail: string): Promise<GmailMsg[]> {
+  const ids = await listIds(accountId, WINDOW_QUERY, 50);
+  return mapLimit(ids, 6, (x) => getMessage(accountId, x.id, selfEmail));
 }
 
 export type OutgoingMail = {

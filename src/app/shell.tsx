@@ -3,10 +3,10 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { Icon } from "./ui";
 
-const Ctx = createContext<{ toggle: () => void; collapsed: boolean }>({ toggle: () => {}, collapsed: false });
+const Ctx = createContext<{ toggle: () => void; collapsed: boolean; status: React.ReactNode }>({ toggle: () => {}, collapsed: false, status: null });
 
 /** App frame: collapsible sidebar on desktop (remembered in a cookie), slide-in drawer on phones. */
-export function Shell({ sidebar, children, initialCollapsed }: { sidebar: React.ReactNode; children: React.ReactNode; initialCollapsed: boolean }) {
+export function Shell({ sidebar, children, initialCollapsed, status = null }: { sidebar: React.ReactNode; children: React.ReactNode; initialCollapsed: boolean; status?: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(initialCollapsed);
   const [drawer, setDrawer] = useState(false);
   const path = usePathname();
@@ -28,7 +28,7 @@ export function Shell({ sidebar, children, initialCollapsed }: { sidebar: React.
   };
 
   return (
-    <Ctx.Provider value={{ toggle, collapsed }}>
+    <Ctx.Provider value={{ toggle, collapsed, status }}>
       <div className="flex h-dvh overflow-hidden">
         <aside className={`${collapsed ? "md:hidden" : "md:flex"} hidden w-64 shrink-0 flex-col border-r border-neutral-200/70 bg-white dark:border-neutral-800 dark:bg-neutral-900`}>
           {sidebar}
@@ -52,5 +52,24 @@ export function MenuButton() {
       className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800">
       <Icon name="menu" className="h-5 w-5" />
     </button>
+  );
+}
+
+/** The live "Updated just now" indicator, placed by each page header. */
+export function SyncStatus() {
+  return <>{useContext(Ctx).status}</>;
+}
+
+/** Header + scroll area for secondary pages (Approvals, Settings, Connect your AI). */
+export function PageFrame({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <header className="flex items-center gap-2 border-b border-neutral-200/70 bg-neutral-100/80 px-3 py-2 backdrop-blur dark:border-neutral-800 dark:bg-neutral-950/80 md:px-4">
+        <MenuButton />
+        <h1 className="min-w-0 flex-1 truncate text-sm font-semibold md:text-base">{title}</h1>
+        <SyncStatus />
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+    </div>
   );
 }

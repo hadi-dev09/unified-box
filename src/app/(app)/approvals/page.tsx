@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { PageFrame } from "../../shell";
 import { supabaseServer } from "@/lib/supabase/server";
 import { DraftActions } from "./draft-actions";
 
@@ -9,8 +10,8 @@ export default async function Approvals() {
   if (!user) redirect("/login");
   const { data: drafts } = await sb.from("drafts").select("id, to_addrs, subject, body, status, created_by, error, accounts(display_name)").order("created_at", { ascending: false }).limit(50);
   return (
-    <main className="mx-auto max-w-2xl px-4 py-6 md:py-10">
-      <Link href="/" className="text-sm text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white">← Inbox</Link>
+    <PageFrame title="Approvals">
+    <main className="mx-auto max-w-2xl px-4 py-6 md:py-8">
       <h1 className="my-3 text-2xl font-semibold tracking-tight">Approvals</h1>
       <p className="mb-4 text-sm text-neutral-500">Nothing is sent until you approve it here.</p>
       {(drafts ?? []).length === 0 && <p className="text-sm text-neutral-500">No drafts.</p>}
@@ -29,5 +30,6 @@ export default async function Approvals() {
         </article>
       ))}
     </main>
+    </PageFrame>
   );
 }

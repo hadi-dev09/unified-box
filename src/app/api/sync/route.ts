@@ -15,13 +15,16 @@ function isCron(req: NextRequest) {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
+const MIN_GAP_MS = 45_000;
+
+/** Syncs accounts; for signed-in users, skips inboxes synced in the last 45s (the app polls every minute). */
 async function run(userId: string | null) {
-  let q = supabaseAdmin().from("accounts").select("id").in("status", ["connected", "error"]);
+  let q = supabaseAdmin().from("accounts").select("id, last_synced_at").in("status", ["connected", "error"]);
   if (userId) q = q.eq("user_id", userId);
   const { data } = await q;
-  const results = [];
-  for (const a of data ?? []) results.push(await syncAccount(a.id));
-  return NextResponse.json({ results });
+  const due = (data ?? []).filter((a: { last_synced_at: string | null }) => !userId || !a.last_synced_at || Date.now() - new Date(a.last_synced_at).getTime() > MIN_GAP_MS);
+  const results = await Promise.all(due.map((a: { id: string }) => syncAccount(a.id)));
+  return NextResponse.json({ results, skipped: (data ?? []).length - due.length, changed: results.some((r) => r.changed || r.error) });
 }
 
 // POST: a signed-in user syncs their own accounts; Bearer CRON_SECRET syncs everyone's.

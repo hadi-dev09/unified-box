@@ -40,7 +40,7 @@ export function ProviderIcon({ provider, className = "h-4 w-4" }: { provider?: s
   );
 }
 
-export function Icon({ name, className = "h-4 w-4" }: { name: "menu" | "search" | "close" | "back" | "reply" | "replyAll" | "forward" | "external" | "inbox" | "check" | "spark" | "settings" | "plug"; className?: string }) {
+export function Icon({ name, className = "h-4 w-4" }: { name: "menu" | "search" | "close" | "back" | "reply" | "replyAll" | "forward" | "external" | "inbox" | "check" | "spark" | "settings" | "plug" | "logout"; className?: string }) {
   const p: Record<string, React.ReactNode> = {
     menu: <path d="M4 6h16M4 12h16M4 18h16" />,
     search: <><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></>,
@@ -55,6 +55,7 @@ export function Icon({ name, className = "h-4 w-4" }: { name: "menu" | "search" 
     spark: <path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6" />,
     settings: <><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1" /></>,
     plug: <path d="M9 7V3M15 7V3M6 7h12v4a6 6 0 0 1-12 0zM12 17v4" />,
+    logout: <><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" /><path d="M10 17l-5-5 5-5M5 12h11" /></>,
   };
   return <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>{p[name]}</svg>;
 }

@@ -33,7 +33,7 @@ export const tools: Tool[] = [
       for (const a of (accts ?? []) as { id: string; display_name: string; last_synced_at: string | null }[]) {
         if (a.last_synced_at && Date.now() - new Date(a.last_synced_at).getTime() < 60_000) continue;
         const r = await syncAccount(a.id);
-        results.push({ inbox: a.display_name, new_or_updated: r.synced, ...(r.error ? { error: r.error } : {}), ...(r.note ? { note: r.note } : {}) });
+        results.push({ inbox: a.display_name, new_messages: r.synced, unread_in_gmail: r.unread, ...(r.error ? { error: r.error } : {}), ...(r.note ? { note: r.note } : {}) });
       }
       return { synced: results };
     }),

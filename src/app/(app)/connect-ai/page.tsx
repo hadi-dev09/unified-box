@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { PageFrame } from "../../shell";
 import { revalidatePath } from "next/cache";
 import { createApiToken, revokeApiToken } from "@/lib/api-tokens";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { supabaseServer } from "@/lib/supabase/server";
-import { LocalTime } from "../local-time";
-import { Icon } from "../ui";
+import { LocalTime } from "../../local-time";
+import { Icon } from "../../ui";
 import { ConnectButton } from "./connect-button";
 import { CopyButton } from "./copy-button";
 import { NewKey } from "./new-key";
@@ -74,8 +75,8 @@ export default async function ConnectAI() {
   const card = "rounded-2xl bg-white p-4 ring-1 ring-neutral-200/70 dark:bg-neutral-900 dark:ring-neutral-800 md:p-5";
 
   return (
-    <main className="mx-auto max-w-3xl space-y-5 px-4 py-6 md:py-10">
-      <Link href="/" className="inline-flex items-center gap-1 text-sm text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white"><Icon name="back" /> Inbox</Link>
+    <PageFrame title="Connect your AI">
+    <main className="mx-auto max-w-3xl space-y-5 px-4 py-6 md:py-8">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Connect your AI</h1>
         <p className="mt-1 text-sm text-neutral-500">Pick your assistant and click Connect. You&apos;ll approve once on a Unified Box screen. Assistants can read your inboxes and draft replies, but never send or delete: drafts wait for you in Approvals.</p>
@@ -135,5 +136,6 @@ export default async function ConnectAI() {
         </ul>
       </section>
     </main>
+    </PageFrame>
   );
 }

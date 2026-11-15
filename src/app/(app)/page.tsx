@@ -1,19 +1,16 @@
 import Link from "next/link";
-import { cookies } from "next/headers";
+import { inboxSummary } from "@/lib/inbox-summary";
 import { forwardBlock, isGroup, replyRecipients, replySubject, type Msg } from "@/lib/reply";
 import { supabaseServer } from "@/lib/supabase/server";
-import { assignClientAction } from "./actions";
-import { Landing } from "./landing";
-import { AutoSync } from "./auto-sync";
-import { Composer, type Preset } from "./composer";
-import { LocalTime } from "./local-time";
-import { MarkSeen } from "./mark-seen";
-import { MessageBody } from "./message-body";
-import { MenuButton, Shell } from "./shell";
-import { SyncButton } from "./sync-button";
-import { Avatar, Icon, ProviderIcon, statusDot, statusLabel } from "./ui";
+import { assignClientAction } from "../actions";
+import { Landing } from "../landing";
+import { Composer, type Preset } from "../composer";
+import { LocalTime } from "../local-time";
+import { MarkSeen } from "../mark-seen";
+import { MessageBody } from "../message-body";
+import { MenuButton, SyncStatus } from "../shell";
+import { Avatar, Icon, ProviderIcon, statusDot } from "../ui";
 
-type Account = { id: string; provider: string; display_name: string; account_type: string; status: string; status_detail: string | null; last_synced_at: string | null; can_send: boolean; external_id: string };
 type Thread = { id: string; subject: string | null; snippet: string | null; last_message_at: string; unread: boolean; needs_reply: boolean; last_from: string | null; account_id: string; accounts: { display_name: string; provider: string } | null; clients: { name: string } | null };
 type Filter = "all" | "unread" | "reply";
 type Search = { account?: string; client?: string; thread?: string; f?: string; q?: string; notice?: string };
@@ -26,23 +23,8 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   const { account, client, thread } = sp;
   const filter: Filter = sp.f === "unread" || sp.f === "reply" ? sp.f : "all";
   const q = (sp.q ?? "").replace(/[%,()*_\\]/g, " ").trim().slice(0, 100);
-  const collapsed = (await cookies()).get("ub_sidebar")?.value === "collapsed";
 
-  const [{ data: accountRows }, { count: pending }, { data: counts }, { data: clientRows }] = await Promise.all([
-    sb.from("accounts").select("id, provider, display_name, account_type, status, status_detail, last_synced_at, can_send, external_id").order("display_name"),
-    sb.from("drafts").select("id", { count: "exact", head: true }).eq("status", "pending"),
-    sb.from("threads").select("account_id, client_id, unread, needs_reply").limit(5000),
-    sb.from("clients").select("id, name").order("name"),
-  ]);
-  const accounts = (accountRows ?? []) as Account[];
-  const clients = (clientRows ?? []) as { id: string; name: string }[];
-
-  const perAcct: Record<string, number> = {}, perClient: Record<string, number> = {};
-  let unreadTotal = 0, replyTotal = 0;
-  for (const c of counts ?? []) {
-    if (c.unread) { unreadTotal++; perAcct[c.account_id] = (perAcct[c.account_id] ?? 0) + 1; if (c.client_id) perClient[c.client_id] = (perClient[c.client_id] ?? 0) + 1; }
-    if (c.needs_reply) replyTotal++;
-  }
+  const { accounts, clients, perAcct, unreadTotal, replyTotal } = await inboxSummary();
 
   let tq = sb.from("threads").select("id, subject, snippet, last_message_at, unread, needs_reply, last_from, account_id, accounts(display_name, provider), clients(name)").order("last_message_at", { ascending: false }).limit(150);
   if (account) tq = tq.eq("account_id", account);
@@ -64,64 +46,8 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
     const p = new URLSearchParams(Object.entries({ account, client, f: filter === "all" ? undefined : filter, q: q || undefined, ...o }).filter(([, v]) => v) as [string, string][]);
     return p.size ? `/?${p}` : "/";
   };
-  const lastSynced = accounts.map((a) => a.last_synced_at).filter(Boolean).sort().pop() ?? null;
   const title = account ? accounts.find((a) => a.id === account)?.display_name ?? "Inbox" : client ? clients.find((c) => c.id === client)?.name ?? "Client" : "All inboxes";
   const open = Boolean(thread && cur);
-
-  const navItem = (active: boolean) =>
-    `group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${active ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900" : "text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"}`;
-  const badge = (n: number, active: boolean) => n > 0 && <span className={`ml-auto rounded-full px-1.5 text-[11px] font-semibold tabular-nums ${active ? "bg-white/20 dark:bg-neutral-900/10" : "text-neutral-500"}`}>{n}</span>;
-
-  const sidebar = (
-    <div className="flex h-full flex-col gap-4 overflow-y-auto p-3">
-      <div className="flex items-center gap-2 px-1 pt-1">
-        <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"><Icon name="inbox" /></span>
-        <span className="text-[15px] font-semibold tracking-tight">Unified Box</span>
-      </div>
-      <nav className="space-y-0.5">
-        <Link href="/" className={navItem(!account && !client)}><Icon name="inbox" /> All inboxes {badge(unreadTotal, !account && !client)}</Link>
-      </nav>
-      <div>
-        <p className="mb-1 px-2.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400">Inboxes</p>
-        <nav className="space-y-0.5">
-          {accounts.length === 0 && <Link href="/settings" className="block px-2.5 py-2 text-sm text-blue-600">+ Connect an inbox</Link>}
-          {accounts.map((a) => (
-            <Link key={a.id} href={`/?account=${a.id}`} title={a.status_detail ?? statusLabel[a.status] ?? "Connected"} className={navItem(account === a.id)}>
-              <span className="relative shrink-0">
-                <ProviderIcon provider={a.provider} />
-                <span className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-white dark:ring-neutral-900 ${statusDot[a.status] ?? "bg-neutral-400"}`} />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate">{a.display_name}</span>
-                {statusLabel[a.status] && <span className="block text-[11px] text-amber-600">{statusLabel[a.status]}</span>}
-              </span>
-              {badge(perAcct[a.id] ?? 0, account === a.id)}
-            </Link>
-          ))}
-        </nav>
-      </div>
-      {clients.length > 0 && (
-        <div>
-          <p className="mb-1 px-2.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400">Clients</p>
-          <nav className="space-y-0.5">
-            {clients.map((c) => (
-              <Link key={c.id} href={`/?client=${c.id}`} className={navItem(client === c.id)}>
-                <span className="h-2.5 w-2.5 shrink-0 rounded-sm bg-violet-500" /> <span className="truncate">{c.name}</span> {badge(perClient[c.id] ?? 0, client === c.id)}
-              </Link>
-            ))}
-          </nav>
-        </div>
-      )}
-      <nav className="mt-auto space-y-0.5 border-t border-neutral-200/70 pt-3 dark:border-neutral-800">
-        <Link href="/approvals" className={navItem(false)}><Icon name="check" /> Approvals {pending ? <span className="ml-auto rounded-full bg-amber-500 px-1.5 text-[11px] font-semibold text-white">{pending}</span> : null}</Link>
-        <Link href="/connect-ai" className={navItem(false)}><Icon name="spark" /> Connect your AI</Link>
-        <Link href="/settings" className={navItem(false)}><Icon name="settings" /> Accounts &amp; settings</Link>
-        <form action="/auth/signout" method="post">
-          <button className={`${navItem(false)} w-full`} title={user.email ?? undefined}><Icon name="back" /> Sign out <span className="ml-auto max-w-28 truncate text-[11px] text-neutral-400">{user.email}</span></button>
-        </form>
-      </nav>
-    </div>
-  );
 
   // ---------- reader ----------
   let reader: React.ReactNode = null;
@@ -236,30 +162,34 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
             {!accounts.length && <Link href="/settings" className="mt-4 inline-block rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white dark:bg-white dark:text-neutral-900">Connect an inbox</Link>}
           </div>
         )}
-        <ul className="space-y-0.5">
+        <ul className="space-y-1">
           {threads.map((t) => {
             const active = thread === t.id;
             const who = t.last_from || "(unknown)";
             return (
               <li key={t.id}>
                 <Link href={qs({ thread: t.id })} aria-current={active ? "true" : undefined}
-                  className={`group relative flex gap-3 rounded-xl px-3 py-2.5 transition ${active ? "bg-white shadow-sm ring-1 ring-neutral-200 dark:bg-neutral-800 dark:ring-neutral-700" : "hover:bg-white dark:hover:bg-neutral-900"} ${wide ? "lg:items-center" : ""}`}>
-                  <span className={`absolute left-0.5 top-[18px] h-2 w-2 rounded-full ${t.unread ? "bg-blue-600" : "bg-transparent"} ${wide ? "lg:top-1/2 lg:-translate-y-1/2" : ""}`} aria-label={t.unread ? "Unread" : undefined} />
+                  className={`group relative flex gap-3 rounded-xl py-2.5 pl-4 pr-3 transition ${
+                    active ? "bg-white shadow-sm ring-1 ring-neutral-300 dark:bg-neutral-800 dark:ring-neutral-600"
+                    : t.unread ? "bg-white shadow-sm ring-1 ring-blue-200/80 hover:ring-blue-300 dark:bg-neutral-900 dark:ring-blue-900/70 dark:hover:ring-blue-800"
+                    : "hover:bg-white/70 dark:hover:bg-neutral-900/60"} ${wide ? "lg:items-center" : ""}`}>
+                  {t.unread && <span className="absolute inset-y-2 left-1 w-1 rounded-full bg-blue-600" aria-hidden />}
+                  {t.unread && <span className="sr-only">Unread. </span>}
                   <Avatar name={who} you={who === "You"} size="md" />
                   <div className={`min-w-0 flex-1 ${wide ? "lg:flex lg:items-center lg:gap-4" : ""}`}>
                     <div className={`flex items-baseline gap-2 ${wide ? "lg:w-52 lg:shrink-0" : ""}`}>
-                      <span className={`truncate text-sm ${t.unread ? "font-semibold" : "font-medium text-neutral-700 dark:text-neutral-300"}`}>{who}</span>
-                      <span className={`ml-auto shrink-0 text-xs text-neutral-500 ${wide ? "lg:hidden" : ""}`}><LocalTime iso={t.last_message_at} /></span>
+                      <span className={`truncate text-sm ${t.unread ? "font-bold text-neutral-950 dark:text-white" : "text-neutral-600 dark:text-neutral-400"}`}>{who}</span>
+                      <span className={`ml-auto shrink-0 text-xs ${t.unread ? "font-semibold text-blue-600 dark:text-blue-400" : "text-neutral-500"} ${wide ? "lg:hidden" : ""}`}><LocalTime iso={t.last_message_at} /></span>
                     </div>
                     <div className={`min-w-0 ${wide ? "lg:flex lg:flex-1 lg:items-center lg:gap-2" : ""}`}>
-                      <p className={`truncate text-sm ${t.unread ? "font-semibold" : "text-neutral-700 dark:text-neutral-300"} ${wide ? "lg:max-w-[45%] lg:shrink-0" : ""}`}>{t.subject || "(no subject)"}</p>
-                      <p className={`truncate text-sm text-neutral-500 ${wide ? "lg:min-w-0 lg:flex-1" : ""}`}>{wide && <span className="hidden lg:inline">— </span>}{t.snippet}</p>
+                      <p className={`truncate text-sm ${t.unread ? "font-semibold text-neutral-950 dark:text-white" : "text-neutral-600 dark:text-neutral-400"} ${wide ? "lg:max-w-[45%] lg:shrink-0" : ""}`}>{t.subject || "(no subject)"}</p>
+                      <p className={`truncate text-sm ${t.unread ? "text-neutral-600 dark:text-neutral-300" : "text-neutral-500 dark:text-neutral-500"} ${wide ? "lg:min-w-0 lg:flex-1" : ""}`}>{wide && <span className="hidden lg:inline">— </span>}{t.snippet}</p>
                     </div>
                     <div className={`mt-1 flex items-center gap-1.5 ${wide ? "lg:mt-0 lg:shrink-0" : ""}`}>
                       {!account && t.accounts && <span className="inline-flex max-w-40 items-center gap-1 truncate rounded-md bg-neutral-100 px-1.5 py-0.5 text-[11px] text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400"><ProviderIcon provider={t.accounts.provider} className="h-3 w-3" />{t.accounts.display_name.split("@")[0]}</span>}
                       {t.clients?.name && <span className="rounded-md bg-violet-100 px-1.5 py-0.5 text-[11px] font-medium text-violet-800 dark:bg-violet-950 dark:text-violet-200">{t.clients.name}</span>}
                       {t.needs_reply && <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-200">Reply</span>}
-                      {wide && <span className="ml-auto hidden w-16 text-right text-xs text-neutral-500 lg:inline"><LocalTime iso={t.last_message_at} /></span>}
+                      {wide && <span className={`ml-auto hidden w-16 text-right text-xs lg:inline ${t.unread ? "font-semibold text-blue-600 dark:text-blue-400" : "text-neutral-500"}`}><LocalTime iso={t.last_message_at} /></span>}
                     </div>
                   </div>
                 </Link>
@@ -272,8 +202,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   );
 
   return (
-    <Shell sidebar={sidebar} initialCollapsed={collapsed}>
-      <AutoSync enabled={accounts.some((a) => a.status === "connected" || a.status === "error")} lastSyncedAt={lastSynced} />
+    <>
       {sp.notice === "password-updated" && <p className="bg-emerald-50 px-4 py-2 text-center text-sm text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200">Your password was updated.</p>}
       <header className={`${open ? "hidden md:flex" : "flex"} items-center gap-2 border-b border-neutral-200/70 bg-neutral-100/80 px-3 py-2 backdrop-blur dark:border-neutral-800 dark:bg-neutral-950/80 md:px-4`}>
         <MenuButton />
@@ -289,7 +218,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
             <input name="q" defaultValue={q} placeholder="Search mail" className="w-full bg-transparent text-sm outline-none placeholder:text-neutral-400" />
           </label>
         </form>
-        <SyncButton />
+        <SyncStatus />
       </header>
       {!open && (accounts.length > 1 || clients.length > 0) && (
         <div className="flex gap-2 overflow-x-auto border-b border-neutral-200/70 px-3 py-2 no-scrollbar dark:border-neutral-800 md:hidden">
@@ -313,6 +242,6 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
         {list}
         {reader}
       </div>
-    </Shell>
+    </>
   );
 }

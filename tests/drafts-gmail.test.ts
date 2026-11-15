@@ -336,6 +336,10 @@ test("/api/sync: auth rules (session, cron secret, neither)", async () => {
     assert.equal((await r.json()).results.length, 2, "cron syncs all users");
 
     db.user = A;
+    const throttled = await (await call()).json();
+    assert.equal(throttled.results.length, 0, "just synced by cron -> skipped (45s throttle)");
+    assert.equal(throttled.skipped, 1, "only the user's own account is considered");
+    db.rows("accounts").forEach((a) => (a.last_synced_at = null));
     const mine = await (await call()).json();
     assert.equal(mine.results.length, 1, "a user only syncs their own accounts");
   } finally { net.restore(); }
@@ -396,4 +400,41 @@ test("registration is rate-limited per hour", async () => {
   const r = await register.POST(new NextRequest("https://app.test/api/oauth/register", { method: "POST", body: JSON.stringify({ redirect_uris: ["https://claude.example/cb"] }), headers: { "content-type": "application/json" } }));
   assert.equal(r.status, 429);
   assert.equal(r.headers.get("retry-after"), "3600");
+});
+
+test("sync: unread state follows Gmail's unread list, including mail read elsewhere", async () => {
+  const acct = seedAccount();
+  const mk = (id: string, ts: number, labels: string[]) => gm(id, { from: "Ann <ann@acme.com>", subject: "Hi " + id, text: "hello", ts, labels });
+  const msgs: Record<string, unknown> = { u1: mk("u1", 1_700_000_000_000, ["UNREAD"]), r1: mk("r1", 1_700_000_100_000, []) };
+  let unread = ["u1"];
+  const net = stubFetch((c) => {
+    if (c.url.includes("/messages?")) {
+      const ids = decodeURIComponent(c.url).includes("is:unread") ? unread : Object.keys(msgs);
+      return { messages: ids.map((id) => ({ id, threadId: `t-${id}` })) };
+    }
+    const m = c.url.match(/\/messages\/(\w+)\?format=full/);
+    if (m) return msgs[m[1]];
+  });
+  try {
+    const first = await syncAccount(acct);
+    assert.equal(first.synced, 2);
+    assert.equal(first.unread, 1);
+    const t = (ext: string) => db.rows("threads").find((x) => x.external_id === ext)!;
+    assert.equal(t("t-u1").unread, true);
+    assert.equal(t("t-r1").unread, false);
+
+    const fetchesBefore = net.calls.filter((c) => c.url.includes("format=full")).length;
+    unread = []; // read on the phone
+    const second = await syncAccount(acct);
+    assert.equal(second.synced, 0, "no re-download of known messages");
+    assert.equal(net.calls.filter((c) => c.url.includes("format=full")).length, fetchesBefore);
+    assert.equal(second.changed, true);
+    assert.equal(t("t-u1").unread, false, "read elsewhere -> read here");
+
+    unread = ["r1"]; // marked unread again in Gmail
+    await syncAccount(acct);
+    assert.equal(t("t-r1").unread, true);
+    const third = await syncAccount(acct);
+    assert.equal(third.changed, false, "nothing changed -> no refresh needed");
+  } finally { net.restore(); }
 });

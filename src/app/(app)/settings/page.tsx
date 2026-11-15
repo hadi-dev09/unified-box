@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { PageFrame } from "../../shell";
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { disconnectAccount } from "@/lib/accounts";
@@ -77,8 +78,8 @@ export default async function Settings({ searchParams }: { searchParams: Promise
   const field = "rounded-lg border border-neutral-300 bg-transparent px-3 py-2 text-sm dark:border-neutral-700";
   const btn = "rounded-lg border border-neutral-300 px-3 py-3 text-sm dark:border-neutral-700";
   return (
-    <main className="mx-auto max-w-2xl px-4 py-6 md:py-10">
-      <Link href="/" className="text-sm text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white">← Inbox</Link>
+    <PageFrame title="Accounts &amp; settings">
+    <main className="mx-auto max-w-2xl px-4 py-6 md:py-8">
       <h1 className="my-3 text-2xl font-semibold tracking-tight">Connect accounts</h1>
       {msg && <p className="mb-3 rounded bg-neutral-100 p-3 text-sm dark:bg-neutral-900">{msg}</p>}
       <h2 className="mt-4 font-medium">Gmail</h2>
@@ -162,5 +163,6 @@ export default async function Settings({ searchParams }: { searchParams: Promise
         ))}
       </ul>
     </main>
+    </PageFrame>
   );
 }
