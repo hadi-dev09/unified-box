@@ -95,7 +95,7 @@ test("compose: guards (auth, ownership, read-only, Slack, bad input)", async () 
   const ths = seedThread(A, { provider: "slack" });
   db.user = A;
   const r = await post({ thread_id: ths, mode: "reply", to: ["a@b.co"], subject: "s", body: "b", send: true });
-  assert.match((await r.json()).error, /only available for Gmail/);
+  assert.match((await r.json()).error, /isn.t available for Slack/);
 });
 
 test("read state: opening a thread marks it read, and a re-sync doesn't flip it back", async () => {

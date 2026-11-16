@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Avatar, Icon, ProviderIcon } from "./ui";
 
 const FEATURES: { icon: "inbox" | "spark" | "check" | "plug" | "settings" | "search"; title: string; body: string }[] = [
-  { icon: "inbox", title: "Every inbox in one place", body: "Connect several Gmail accounts and Slack workspaces. Read everything from one screen on your laptop or phone." },
+  { icon: "inbox", title: "Every inbox in one place", body: "Connect Gmail, Outlook, WhatsApp Business, Telegram and Slack. Read everything from one screen on your laptop or phone." },
   { icon: "plug", title: "Grouped by client", body: "Tag conversations by client automatically by sender or domain, across every account." },
   { icon: "spark", title: "Works with your AI", body: "Connect Claude, ChatGPT, Grok or Gemini and ask “what needs a reply today?” across all inboxes." },
   { icon: "check", title: "You approve every send", body: "AI can draft replies, but nothing leaves without your OK. Edit, approve or reject in one tap." },
@@ -31,7 +31,7 @@ export function Landing() {
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> For freelancers, agencies and busy managers
           </p>
           <h1 className="mx-auto max-w-3xl text-4xl font-semibold leading-[1.1] tracking-tight md:text-6xl">Stop juggling five inboxes before breakfast.</h1>
-          <p className="mx-auto mt-5 max-w-2xl text-lg text-neutral-600 dark:text-neutral-400">Unified Box brings your Gmail accounts and Slack workspaces into one fast inbox, grouped by client, and lets your AI assistant read and draft for you, with you approving every send.</p>
+          <p className="mx-auto mt-5 max-w-2xl text-lg text-neutral-600 dark:text-neutral-400">Unified Box brings your email (Gmail, Outlook) and chats (WhatsApp Business, Telegram, Slack) into one fast inbox, grouped by client, and lets your AI assistant read and draft for you, with you approving every send.</p>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
             <Link href="/signup" className="rounded-xl bg-neutral-900 px-5 py-3 font-semibold text-white hover:bg-neutral-700 dark:bg-white dark:text-neutral-900">Create free account</Link>
             <Link href="/login" className="rounded-xl border border-neutral-300 px-5 py-3 font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900">Sign in</Link>
@@ -77,7 +77,7 @@ export function Landing() {
             </div>
           ))}
         </div>
-        <p className="mt-10 text-center text-sm text-neutral-500">Gmail and Slack today · WhatsApp Business, Upwork and Telegram on the roadmap</p>
+        <p className="mt-10 text-center text-sm text-neutral-500">Gmail, Outlook, WhatsApp Business, Telegram and Slack · Teams, SMS, Instagram and Messenger on the roadmap</p>
       </section>
 
       <footer className="border-t border-neutral-200 dark:border-neutral-800">

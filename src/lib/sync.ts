@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "./supabase/admin";
 import { getMessage, listIds, mapLimit, NeedsReauth, WINDOW_QUERY, type GmailMsg } from "./gmail";
+import { outlookRecent } from "./outlook";
 import { loadRules } from "./clients";
 import { syncSlack } from "./slack";
 import { matchClient } from "./client-match";
@@ -20,6 +21,22 @@ export async function syncAccount(accountId: string): Promise<SyncResult> {
   const { data: acct } = await db.from("accounts").select("*").eq("id", accountId).single();
   if (!acct) return { accountId, synced: 0 };
   if (acct.provider === "slack") return syncSlack(accountId);
+  if (acct.provider === "whatsapp") {
+    // WhatsApp delivers messages to our webhook in real time; nothing to poll.
+    await db.from("accounts").update({ last_synced_at: new Date().toISOString() }).eq("id", accountId);
+    return { accountId, synced: 0, changed: false, note: "WhatsApp messages arrive instantly via webhook." };
+  }
+  if (acct.provider === "outlook" || acct.provider === "telegram") {
+    try {
+      const r: SyncResult = acct.provider === "outlook" ? await syncOutlook(acct) : await (await import("./telegram")).syncTelegram(acct);
+      await db.from("accounts").update({ status: "connected", status_detail: r.note ?? null, last_synced_at: new Date().toISOString() }).eq("id", accountId);
+      return r;
+    } catch (e) {
+      const reauth = e instanceof NeedsReauth;
+      await db.from("accounts").update({ status: reauth ? "needs_reauth" : "error", status_detail: String((e as Error).message).slice(0, 300) }).eq("id", accountId);
+      return { accountId, synced: 0, error: (e as Error).message };
+    }
+  }
   if (acct.provider !== "gmail") return { accountId, synced: 0 };
 
   try {
@@ -45,40 +62,7 @@ export async function syncAccount(accountId: string): Promise<SyncResult> {
     let changed = msgs.length > 0;
 
     for (const [ext, list] of byThread) {
-      list.sort((a, b) => a.sentAt.localeCompare(b.sentAt));
-      const last = list[list.length - 1];
-      const { data: prev } = await db.from("threads").select("id, last_message_at, seen_at").eq("account_id", accountId).eq("external_id", ext).maybeSingle();
-      const isNewest = !prev || new Date(last.sentAt).getTime() >= new Date(prev.last_message_at).getTime();
-      // Unread only if Gmail says so AND the newest message isn't yours AND someone wrote after you last read it here.
-      const lastIncoming = [...list].reverse().find((m) => !m.outgoing)?.sentAt;
-      const mineIsNewest = isNewest && last.outgoing;
-      const unread = (gmailUnread(ext) || list.some((m) => m.unread && !m.outgoing))
-        && !mineIsNewest
-        && !(prev?.seen_at && (!lastIncoming || seenAfter(prev.seen_at, lastIncoming)));
-      const { data: t, error } = await db.from("threads").upsert(
-        {
-          user_id: acct.user_id, account_id: accountId, external_id: ext, unread,
-          ...(isNewest ? {
-            subject: last.subject, snippet: last.snippet, last_message_at: last.sentAt,
-            needs_reply: !last.outgoing && !last.automated, last_from: last.outgoing ? "You" : last.fromName || last.fromAddr,
-          } : {}),
-        },
-        { onConflict: "account_id,external_id" },
-      ).select("id, client_id").single();
-      if (error || !t) throw new Error(error?.message ?? "thread upsert failed");
-      if (!t.client_id && rules.length) {
-        const client = matchClient(rules, list.flatMap((m) => [m.fromAddr, ...m.to, ...m.cc]).filter((a) => a.toLowerCase() !== acct.external_id.toLowerCase()));
-        if (client) await db.from("threads").update({ client_id: client }).eq("id", t.id).is("client_id", null);
-      }
-      const { error: e2 } = await db.from("messages").upsert(
-        list.map((m) => ({
-          user_id: acct.user_id, account_id: accountId, thread_id: t.id, external_id: m.id,
-          from_addr: m.fromAddr, from_name: m.fromName, to_addrs: m.to, subject: m.subject,
-          body_text: m.body, sent_at: m.sentAt, is_outgoing: m.outgoing, cc_addrs: m.cc, rfc_message_id: m.messageId || null,
-        })),
-        { onConflict: "account_id,external_id" },
-      );
-      if (e2) throw new Error(e2.message);
+      await storeConversation(acct, ext, list, gmailUnread(ext), rules);
     }
 
     // Unread changes on threads that got no new message (read/unread elsewhere, e.g. on your phone).
@@ -98,4 +82,67 @@ export async function syncAccount(accountId: string): Promise<SyncResult> {
     await db.from("accounts").update({ status: reauth ? "needs_reauth" : "error", status_detail: String((e as Error).message).slice(0, 300) }).eq("id", accountId);
     return { accountId, synced: 0, error: (e as Error).message };
   }
+}
+
+type Acct = { id: string; user_id: string; external_id: string };
+
+/**
+ * Stores one conversation's new messages and updates the thread (shared by every provider).
+ * Unread only if the provider says so AND the newest message isn't yours AND someone wrote after you last read it here.
+ */
+export async function storeConversation(acct: Acct, ext: string, list: GmailMsg[], providerUnread: boolean, rules: Awaited<ReturnType<typeof loadRules>>, subjectFallback?: string) {
+  const db = supabaseAdmin();
+  const accountId = acct.id;
+  list.sort((a, b) => a.sentAt.localeCompare(b.sentAt));
+  const last = list[list.length - 1];
+  const { data: prev } = await db.from("threads").select("id, last_message_at, seen_at").eq("account_id", accountId).eq("external_id", ext).maybeSingle();
+  const isNewest = !prev || new Date(last.sentAt).getTime() >= new Date(prev.last_message_at).getTime();
+  const lastIncoming = [...list].reverse().find((m) => !m.outgoing)?.sentAt;
+  const mineIsNewest = isNewest && last.outgoing;
+  const unread = (providerUnread || list.some((m) => m.unread && !m.outgoing))
+    && !mineIsNewest
+    && !(prev?.seen_at && (!lastIncoming || seenAfter(prev.seen_at, lastIncoming)));
+  const { data: t, error } = await db.from("threads").upsert(
+    {
+      user_id: acct.user_id, account_id: accountId, external_id: ext, unread,
+      ...(isNewest ? {
+        subject: subjectFallback ?? last.subject, snippet: last.snippet || last.body.slice(0, 200), last_message_at: last.sentAt,
+        needs_reply: !last.outgoing && !last.automated, last_from: last.outgoing ? "You" : last.fromName || last.fromAddr,
+      } : {}),
+    },
+    { onConflict: "account_id,external_id" },
+  ).select("id, client_id").single();
+  if (error || !t) throw new Error(error?.message ?? "thread upsert failed");
+  if (!t.client_id && rules.length) {
+    const client = matchClient(rules, list.flatMap((m) => [m.fromAddr, ...m.to, ...m.cc]).filter((a) => a.toLowerCase() !== acct.external_id.toLowerCase()));
+    if (client) await db.from("threads").update({ client_id: client }).eq("id", t.id).is("client_id", null);
+  }
+  const { error: e2 } = await db.from("messages").upsert(
+    list.map((m) => ({
+      user_id: acct.user_id, account_id: accountId, thread_id: t.id, external_id: m.id,
+      from_addr: m.fromAddr, from_name: m.fromName, to_addrs: m.to, subject: m.subject,
+      body_text: m.body, sent_at: m.sentAt, is_outgoing: m.outgoing, cc_addrs: m.cc, rfc_message_id: m.messageId || null,
+    })),
+    { onConflict: "account_id,external_id" },
+  );
+  if (e2) throw new Error(e2.message);
+  return t.id as string;
+}
+
+/** Outlook / Microsoft 365: fetch the 14-day window and store every conversation (Graph returns it in one call). */
+async function syncOutlook(acct: Acct): Promise<SyncResult> {
+  const msgs = await outlookRecent(acct.id, acct.external_id);
+  const rules = msgs.length ? await loadRules(acct.user_id) : [];
+  const byConv = new Map<string, GmailMsg[]>();
+  for (const m of msgs) byConv.set(m.threadId, [...(byConv.get(m.threadId) ?? []), m]);
+  const db = supabaseAdmin();
+  const { data: before } = await db.from("threads").select("external_id, unread, last_message_at").eq("account_id", acct.id);
+  const prior = new Map((before ?? []).map((t: { external_id: string; unread: boolean; last_message_at: string }) => [t.external_id, t]));
+  for (const [ext, list] of byConv) await storeConversation(acct, ext, list, list.some((m) => m.unread), rules);
+  const { data: after } = await db.from("threads").select("external_id, unread, last_message_at").eq("account_id", acct.id);
+  const changed = (after ?? []).some((t: { external_id: string; unread: boolean; last_message_at: string }) => {
+    const p = prior.get(t.external_id);
+    return !p || p.unread !== t.unread || p.last_message_at !== t.last_message_at;
+  });
+  return { accountId: acct.id, synced: msgs.length, unread: msgs.filter((m) => m.unread).length, changed };
 }

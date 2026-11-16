@@ -62,9 +62,13 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
       reply_all: { ...replyRecipients("reply_all", messages, self), subject: replySubject("reply_all", cur.subject), body: "" },
       forward: { to: [], cc: [], subject: replySubject("forward", cur.subject), body: last ? `\n${forwardBlock(last)}` : "" },
     };
-    const openHref = acct?.provider === "slack"
-      ? `https://slack.com/app_redirect?team=${encodeURIComponent(acct.external_id.split(":")[0])}&channel=${encodeURIComponent(cur.external_id)}`
-      : acct ? `https://mail.google.com/mail/?authuser=${encodeURIComponent(acct.external_id)}#all/${encodeURIComponent(cur.external_id)}` : null;
+    const openHref = !acct ? null
+      : acct.provider === "slack" ? `https://slack.com/app_redirect?team=${encodeURIComponent(acct.external_id.split(":")[0])}&channel=${encodeURIComponent(cur.external_id)}`
+      : acct.provider === "gmail" ? `https://mail.google.com/mail/?authuser=${encodeURIComponent(acct.external_id)}#all/${encodeURIComponent(cur.external_id)}`
+      : acct.provider === "outlook" ? "https://outlook.office.com/mail/"
+      : acct.provider === "whatsapp" ? `https://wa.me/${encodeURIComponent(cur.external_id)}`
+      : acct.provider === "telegram" ? "https://web.telegram.org/"
+      : null;
     const people = (m: Msg) => [...(m.to_addrs ?? []), ...(m.cc_addrs ?? [])].map((x) => (x.toLowerCase() === self.toLowerCase() ? "me" : x)).join(", ");
 
     reader = (
@@ -104,7 +108,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
                       <span className="truncate text-sm font-semibold">{name}{!m.is_outgoing && m.from_name && <span className="ml-1.5 hidden font-normal text-neutral-500 sm:inline">{m.from_addr}</span>}</span>
                       <span className="shrink-0 text-xs text-neutral-500"><LocalTime iso={m.sent_at} mode="full" /></span>
                     </div>
-                    {people(m) && <p className="truncate text-xs text-neutral-500">to {people(m)}</p>}
+                    {people(m) && !["whatsapp", "telegram"].includes(acct?.provider ?? "") && <p className="truncate text-xs text-neutral-500">to {people(m)}</p>}
                   </div>
                 </div>
               );
@@ -129,7 +133,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
                 <p className="mb-1 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-800 dark:text-violet-200">
                   <Icon name="spark" className="h-3.5 w-3.5" /> {d.created_by === "claude" ? "Draft from your AI assistant" : "Your saved draft"} · not sent yet
                 </p>
-                <p className="mb-2 text-xs text-neutral-500">To {[...d.to_addrs, ...(d.cc_addrs ?? [])].join(", ")}</p>
+                <p className="mb-2 text-xs text-neutral-500">{d.to_addrs.length ? `To ${[...d.to_addrs, ...(d.cc_addrs ?? [])].join(", ")}` : "Reply in this chat"}</p>
                 <DraftActions id={d.id} subject={d.subject} body={d.body} />
               </div>
             ))}
@@ -140,7 +144,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
                 canSend={Boolean(acct?.can_send)}
                 showReplyAll={isGroup(messages, self)}
                 presets={presets}
-                reconnectHref={`/api/connect/gmail?type=${acct?.account_type ?? "personal"}&write=1`}
+                reconnectHref={acct?.provider === "outlook" ? `/api/connect/outlook?type=${acct?.account_type ?? "personal"}&write=1` : `/api/connect/gmail?type=${acct?.account_type ?? "personal"}&write=1`}
                 openHref={openHref}
               />
             </div>
@@ -176,7 +180,9 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
         <ul className="space-y-1">
           {threads.map((t) => {
             const active = thread === t.id;
-            const who = t.last_from || "(unknown)";
+            const isChat = Boolean(t.accounts?.provider && !["gmail", "outlook"].includes(t.accounts.provider));
+            const whoEmail = t.last_from || "(unknown)";
+            const who = isChat ? t.subject || whoEmail : whoEmail;
             return (
               <li key={t.id}>
                 <Link href={qs({ thread: t.id })} aria-current={active ? "true" : undefined}
@@ -193,8 +199,8 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
                       <span className={`ml-auto shrink-0 text-xs ${t.unread ? "font-semibold text-blue-600 dark:text-blue-400" : "text-neutral-500"} ${wide ? "lg:hidden" : ""}`}><LocalTime iso={t.last_message_at} /></span>
                     </div>
                     <div className={`min-w-0 ${wide ? "lg:flex lg:flex-1 lg:items-center lg:gap-2" : ""}`}>
-                      <p className={`truncate text-sm ${t.unread ? "font-semibold text-neutral-950 dark:text-white" : "text-neutral-600 dark:text-neutral-400"} ${wide ? "lg:max-w-[45%] lg:shrink-0" : ""}`}>{t.subject || "(no subject)"}</p>
-                      <p className={`truncate text-sm ${t.unread ? "text-neutral-600 dark:text-neutral-300" : "text-neutral-500 dark:text-neutral-500"} ${wide ? "lg:min-w-0 lg:flex-1" : ""}`}>{wide && <span className="hidden lg:inline">— </span>}{t.snippet}</p>
+                      {!isChat && <p className={`truncate text-sm ${t.unread ? "font-semibold text-neutral-950 dark:text-white" : "text-neutral-600 dark:text-neutral-400"} ${wide ? "lg:max-w-[45%] lg:shrink-0" : ""}`}>{t.subject || "(no subject)"}</p>}
+                      <p className={`truncate text-sm ${t.unread ? "text-neutral-600 dark:text-neutral-300" : "text-neutral-500 dark:text-neutral-500"} ${wide ? "lg:min-w-0 lg:flex-1" : ""}`}>{wide && !isChat && <span className="hidden lg:inline">— </span>}{isChat && t.last_from === "You" ? "You: " : ""}{t.snippet}</p>
                     </div>
                     <div className={`mt-1 flex items-center gap-1.5 ${wide ? "lg:mt-0 lg:shrink-0" : ""}`}>
                       {!account && t.accounts && <span className="inline-flex max-w-40 items-center gap-1 truncate rounded-md bg-neutral-100 px-1.5 py-0.5 text-[11px] text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400"><ProviderIcon provider={t.accounts.provider} className="h-3 w-3" />{t.accounts.display_name.split("@")[0]}</span>}

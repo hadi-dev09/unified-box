@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const config: NextConfig = {
+  // Telegram's MTProto client uses Node sockets and dynamic requires; keep it out of the bundle.
+  serverExternalPackages: ["telegram"],
   async headers() {
     return [
       {

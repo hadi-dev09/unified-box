@@ -227,6 +227,10 @@ export const fakeDb = () => {
       (require("./demo-seed") as typeof import("./demo-seed")).seedDemo(g.__FAKE_DB__);
     }
   }
+  if (process.env.DEMO_MODE === "1" && process.env.NODE_ENV !== "production") {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    (require("./demo-seed") as typeof import("./demo-seed")).installDemoNetwork();
+  }
   return g.__FAKE_DB__;
 };
 

@@ -10,7 +10,7 @@ function hash(s: string) {
 
 export function initials(name: string) {
   const clean = name.replace(/<.*?>|["']/g, "").trim();
-  const parts = clean.split(/[\s@._-]+/).filter(Boolean);
+  const parts = clean.replace(/\(.*?\)/g, " ").split(/[\s@._-]+/).map((w) => w.replace(/[^\p{L}\p{N}]/gu, "")).filter(Boolean);
   return ((parts[0]?.[0] ?? "?") + (parts[1]?.[0] ?? "")).toUpperCase();
 }
 
@@ -25,6 +25,16 @@ export function Avatar({ name, size = "md", you = false }: { name: string; size?
 }
 
 export function ProviderIcon({ provider, className = "h-4 w-4" }: { provider?: string | null; className?: string }) {
+  const svg = (d: React.ReactNode) => (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>{d}</svg>
+  );
+  if (provider === "whatsapp") return svg(<><path d="M4 20l1.3-3.9A8 8 0 1 1 8 19.1z" /><path d="M9.5 9.5c0 2.5 2.5 5 5 5l1-1.5-2-1-1 .8a4 4 0 0 1-2.3-2.3l.8-1-1-2z" /></>);
+  if (provider === "telegram") return svg(<path d="M21 4 3 11l6 2.2M21 4l-3 16-9-6.8M21 4 9 13.2V19l3-3.3" />);
+  if (provider === "outlook" || provider === "teams") return svg(<><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="M3 9h18" /><path d="M8 13h3" /></>);
+  if (provider === "sms") return svg(<><rect x="6" y="2.5" width="12" height="19" rx="2.5" /><path d="M11 18h2" /></>);
+  if (provider === "instagram") return svg(<><rect x="3" y="3" width="18" height="18" rx="5" /><circle cx="12" cy="12" r="4" /><path d="M17.5 6.5h.01" /></>);
+  if (provider === "messenger" || provider === "google_chat" || provider === "discord" || provider === "upwork" || provider === "linkedin")
+    return svg(<path d="M21 12a8 8 0 0 1-11.5 7.2L4 20l1-4.5A8 8 0 1 1 21 12z" />);
   if (provider === "slack") {
     return (
       <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>

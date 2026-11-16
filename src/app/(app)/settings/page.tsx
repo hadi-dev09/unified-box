@@ -8,6 +8,9 @@ import { addRule, createClientRecord, deleteClientRecord, deleteRule } from "@/l
 import { supabaseServer } from "@/lib/supabase/server";
 import { slackConfigured } from "@/lib/slack";
 import { ConfirmSubmit } from "./confirm-submit";
+import { TelegramForm, WhatsAppForm } from "./connect-forms";
+import { isConfigured, provider as providerInfo, PROVIDERS } from "@/lib/providers";
+import { ProviderIcon } from "../../ui";
 
 async function userId() {
   const { data: { user } } = await (await supabaseServer()).auth.getUser();
@@ -82,20 +85,56 @@ export default async function Settings({ searchParams }: { searchParams: Promise
     <main className="mx-auto max-w-2xl px-4 py-6 md:py-8">
       <h1 className="my-3 text-2xl font-semibold tracking-tight">Connect accounts</h1>
       {msg && <p className="mb-3 rounded bg-neutral-100 p-3 text-sm dark:bg-neutral-900">{msg}</p>}
-      <h2 className="mt-4 font-medium">Gmail</h2>
-      <p className="mb-2 text-sm text-neutral-500">Read-only by default. Enable sending only if you want to approve and send replies from here.</p>
-      <div className="grid gap-2 sm:grid-cols-2">
-        <a className={btn} href="/api/connect/gmail?type=personal">Personal · read-only</a>
-        <a className={btn} href="/api/connect/gmail?type=company">Company · read-only</a>
-        <a className={btn} href="/api/connect/gmail?type=personal&write=1">Personal · read + send</a>
-        <a className={btn} href="/api/connect/gmail?type=company&write=1">Company · read + send</a>
+      <p className="mb-4 text-sm text-neutral-500">Everything lands in one inbox, grouped by client. Read-only unless you choose sending.</p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {PROVIDERS.filter((p) => p.stage === "live").map((p) => {
+          const ready = p.id === "slack" ? slackConfigured() : isConfigured(p);
+          return (
+            <section key={p.id} className="rounded-2xl bg-white p-4 ring-1 ring-neutral-200/70 dark:bg-neutral-900 dark:ring-neutral-800" aria-label={p.name}>
+              <h2 className="flex items-center gap-2 font-medium"><ProviderIcon provider={p.id} /> {p.name}
+                {!ready && <span className="ml-auto rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] font-normal text-neutral-500 dark:bg-neutral-800">Coming soon</span>}
+              </h2>
+              <p className="mb-3 mt-1 text-sm text-neutral-500">{p.blurb}</p>
+              {ready && p.id === "gmail" && (
+                <div className="grid gap-2 text-sm">
+                  <a className={btn} href="/api/connect/gmail?type=personal&write=1">Connect · read + send</a>
+                  <details><summary className="cursor-pointer text-xs text-neutral-500">More options</summary>
+                    <div className="mt-2 grid gap-2">
+                      <a className={btn} href="/api/connect/gmail?type=personal">Personal · read-only</a>
+                      <a className={btn} href="/api/connect/gmail?type=company">Company · read-only</a>
+                      <a className={btn} href="/api/connect/gmail?type=company&write=1">Company · read + send</a>
+                    </div>
+                  </details>
+                </div>
+              )}
+              {ready && p.id === "outlook" && (
+                <div className="grid gap-2 text-sm">
+                  <a className={btn} href="/api/connect/outlook?type=personal&write=1">Connect · read + send</a>
+                  <details><summary className="cursor-pointer text-xs text-neutral-500">More options</summary>
+                    <div className="mt-2 grid gap-2">
+                      <a className={btn} href="/api/connect/outlook?type=personal">Personal · read-only</a>
+                      <a className={btn} href="/api/connect/outlook?type=company">Work account · read-only</a>
+                      <a className={btn} href="/api/connect/outlook?type=company&write=1">Work account · read + send</a>
+                    </div>
+                  </details>
+                </div>
+              )}
+              {ready && p.id === "slack" && <a className={`${btn} inline-block`} href="/api/connect/slack">Connect a Slack workspace</a>}
+              {ready && p.id === "whatsapp" && <WhatsAppForm />}
+              {ready && p.id === "telegram" && <TelegramForm />}
+            </section>
+          );
+        })}
       </div>
-      <p className="mt-2 text-xs text-neutral-500">Company accounts may be blocked by a Workspace admin; you'll see a clear message if so. WhatsApp, Upwork and Telegram are coming next.</p>
-      <h2 className="mt-6 font-medium">Slack</h2>
-      <p className="mb-2 text-sm text-neutral-500">Read-only, signed in as you, so you see exactly what you can see in Slack. In client workspaces an admin may need to approve the app.</p>
-      {slackConfigured()
-        ? <a className={`${btn} inline-block`} href="/api/connect/slack">Connect a Slack workspace</a>
-        : <p className="rounded-xl bg-neutral-100 p-3 text-sm text-neutral-600 dark:bg-neutral-900 dark:text-neutral-400">Slack connections are coming soon.</p>}
+      <h2 className="mt-6 font-medium">On the roadmap</h2>
+      <ul className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
+        {PROVIDERS.filter((p) => p.stage !== "live").map((p) => (
+          <li key={p.id} className="flex gap-2 rounded-xl bg-neutral-50 p-3 text-neutral-600 dark:bg-neutral-900/60 dark:text-neutral-400">
+            <ProviderIcon provider={p.id} className="mt-0.5 h-4 w-4" />
+            <span><span className="font-medium text-neutral-800 dark:text-neutral-200">{p.name}</span>{p.stage === "unavailable" ? " · not possible" : " · coming"}<br /><span className="text-xs">{p.blurb}</span></span>
+          </li>
+        ))}
+      </ul>
       <h2 className="mt-6 font-medium">Connected</h2>
       <ul className="mt-2 space-y-2 text-sm">
         {(accounts ?? []).length === 0 && <li className="text-neutral-500">No accounts yet. Connect one above.</li>}
@@ -103,14 +142,14 @@ export default async function Settings({ searchParams }: { searchParams: Promise
           <li key={a.id} className="rounded-xl bg-white p-3 ring-1 ring-neutral-200/70 dark:bg-neutral-900 dark:ring-neutral-800">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <div className="font-medium">{a.display_name}</div>
-                <div className="text-xs text-neutral-500">{a.provider} · {a.account_type} · {a.status === "connected" ? "connected" : a.status.replace(/_/g, " ")} · {a.can_send ? "can send (with approval)" : "read-only"}</div>
+                <div className="flex items-center gap-1.5 font-medium"><ProviderIcon provider={a.provider} className="h-3.5 w-3.5" />{a.display_name}</div>
+                <div className="text-xs text-neutral-500">{providerInfo(a.provider)?.name ?? a.provider} · {a.account_type} · {a.status === "connected" ? "connected" : a.status.replace(/_/g, " ")} · {a.can_send ? "can reply" : "read-only"}</div>
               </div>
               <div className="flex items-center gap-3 text-sm">
-                {a.status !== "connected" && <a className="text-blue-600" href={a.provider === "slack" ? "/api/connect/slack" : `/api/connect/gmail?type=${a.account_type}${a.can_send ? "&write=1" : ""}`}>Reconnect</a>}
+                {a.status !== "connected" && ["gmail", "outlook", "slack"].includes(a.provider) && <a className="text-blue-600" href={a.provider === "slack" ? "/api/connect/slack" : `/api/connect/${a.provider}?type=${a.account_type}${a.can_send ? "&write=1" : ""}`}>Reconnect</a>}
                 <form action={disconnect}>
                   <input type="hidden" name="account_id" value={a.id} />
-                  <ConfirmSubmit message={`Disconnect ${a.display_name}? Its synced messages will be deleted from Unified Box. Your real mailbox is not touched.`} className="text-red-600">Disconnect</ConfirmSubmit>
+                  <ConfirmSubmit message={`Disconnect ${a.display_name}? Its synced messages will be deleted from Unified Box. Nothing is deleted in the original app.`} className="text-red-600">Disconnect</ConfirmSubmit>
                 </form>
               </div>
             </div>

@@ -17,7 +17,7 @@ export default async function Approvals() {
       {(drafts ?? []).length === 0 && <p className="text-sm text-neutral-500">No AI drafts. Ask your assistant to draft a reply and it will appear here, and inside the conversation.</p>}
       {(drafts ?? []).map((d) => (
         <article key={d.id} className="mb-3 rounded-xl bg-white p-3 ring-1 ring-neutral-200/70 dark:bg-neutral-900 dark:ring-neutral-800">
-          <div className="text-xs text-neutral-500">From {(d.accounts as unknown as { display_name: string } | null)?.display_name} → {d.to_addrs.join(", ")} · {d.created_by === "claude" ? "written by AI" : "written by you"} · {d.status}</div>
+          <div className="text-xs text-neutral-500">From {(d.accounts as unknown as { display_name: string } | null)?.display_name} → {d.to_addrs.length ? d.to_addrs.join(", ") : "same chat"} · {d.created_by === "claude" ? "written by AI" : "written by you"} · {d.status}</div>
           {d.status === "pending" ? (
             <DraftActions id={d.id} subject={d.subject} body={d.body} />
           ) : (

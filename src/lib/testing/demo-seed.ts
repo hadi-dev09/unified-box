@@ -53,7 +53,53 @@ export function seedDemo(db: FakeDb) {
   db.rows("client_rules").push({ id: "r1", user_id: u, client_id: "c1", kind: "domain", pattern: "greenbridge.io" }, { id: "r2", user_id: u, client_id: "c2", kind: "email", pattern: "daniel.okafor@acme-agency.com" });
   for (const [t, c] of [["t2", "c1"], ["t7", "c1"], ["t5", "c2"]]) db.rows("threads").find((x) => x.id === t)!.client_id = c;
   db.rows("accounts").push({ id: "a4", user_id: u, provider: "slack", account_type: "company", display_name: "Greenbridge Workspace", external_id: "T1:U1", status: "connected", can_send: false, last_synced_at: ago(8) });
+  // Chat apps: one WhatsApp Business number and one Telegram account, each with a conversation.
+  db.rows("accounts").push(
+    { id: "a5", user_id: u, provider: "whatsapp", account_type: "company", display_name: "Acme Studio · +92 300 0000000", external_id: "111222333", status: "connected", can_send: true, last_synced_at: ago(1) },
+    { id: "a6", user_id: u, provider: "telegram", account_type: "personal", display_name: "@rafay", external_id: "42", status: "connected", can_send: true, last_synced_at: ago(2) },
+  );
+  db.rows("threads").push(
+    { id: "t9", user_id: u, account_id: "a5", external_id: "923001234567", subject: "Sara (Greenbridge)", snippet: "Is the invoice ready? Need it before 5pm", last_message_at: ago(4), unread: true, needs_reply: true, last_from: "Sara (Greenbridge)", client_id: "c1" },
+    { id: "t10", user_id: u, account_id: "a6", external_id: "777", subject: "Omar (Client)", snippet: "Can we move tomorrow's call to 4pm?", last_message_at: ago(30), unread: true, needs_reply: true, last_from: "Omar" },
+  );
+  db.rows("messages").push(
+    { id: "m-t9-1", user_id: u, account_id: "a5", thread_id: "t9", external_id: "wamid.d1", from_addr: "+923001234567", from_name: "Sara (Greenbridge)", to_addrs: [], subject: "Sara (Greenbridge)", body_text: "Hi! Quick one", sent_at: ago(6), is_outgoing: false },
+    { id: "m-t9-2", user_id: u, account_id: "a5", thread_id: "t9", external_id: "wamid.d2", from_addr: "+923001234567", from_name: "Sara (Greenbridge)", to_addrs: [], subject: "Sara (Greenbridge)", body_text: "Is the invoice ready? Need it before 5pm", sent_at: ago(4), is_outgoing: false },
+    { id: "m-t10-1", user_id: u, account_id: "a6", thread_id: "t10", external_id: "777:1", from_addr: "777", from_name: "Omar", to_addrs: [], subject: "Omar (Client)", body_text: "Can we move tomorrow's call to 4pm?", sent_at: ago(30), is_outgoing: false },
+  );
+  if (process.env.TOKEN_ENCRYPTION_KEY) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { encrypt } = require("../crypto") as typeof import("../crypto");
+    const tok = encrypt(JSON.stringify({ access_token: "demo", refresh_token: "demo", expires_at: Date.now() + 365 * 86400_000, scope: "x" }));
+    db.rows("account_secrets").push({ account_id: "a1", tokens_enc: tok }, { account_id: "a3", tokens_enc: tok }, { account_id: "a4", tokens_enc: tok }, { account_id: "a5", tokens_enc: tok }, { account_id: "a6", tokens_enc: encrypt(JSON.stringify({ session: "demo" })) });
+  }
+  installDemoNetwork();
   db.rows("api_tokens").push({ id: "k1", user_id: u, name: "Cursor", token_hash: "x", prefix: "ubx_Ab12Cd", created_at: ago(600), last_used_at: ago(30), revoked_at: null });
   db.rows("oauth_clients").push({ client_id: "demo-claude", client_name: "Claude", redirect_uris: ["https://claude.example/callback"] });
   db.rows("oauth_tokens").push({ token_hash: "h1", kind: "refresh", client_id: "demo-claude", user_id: u, expires_at: ago(-60 * 24 * 20) });
+}
+
+/** Demo only: pretend sends succeed so every button can be clicked without real accounts or network. */
+export function installDemoNetwork() {
+  const g = globalThis as unknown as { __TG_FACTORY__?: unknown };
+  // Next.js re-patches fetch, so re-wrap whenever our wrapper isn't the current one.
+  if ((globalThis.fetch as { __demo?: boolean }).__demo) return;
+  const real = globalThis.fetch;
+  const wrapped = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input);
+    const ok = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "content-type": "application/json" } });
+    if (url.includes("gmail.googleapis.com") && url.endsWith("/messages/send")) return ok({ id: `demo-${Date.now()}` });
+    if (url.includes("graph.facebook.com") && url.endsWith("/messages")) return ok({ messages: [{ id: `wamid.demo${Date.now()}` }] });
+    if (url.includes("slack.com")) return ok({ ok: true, channels: [], messages: [], members: [], response_metadata: {} });
+    if (url.includes("googleapis.com") || url.includes("graph.microsoft.com")) return ok({});
+    return real(input, init);
+  }) as typeof fetch & { __demo?: boolean };
+  wrapped.__demo = true;
+  globalThis.fetch = wrapped;
+  g.__TG_FACTORY__ = async () => ({
+    connect: async () => {}, disconnect: async () => {}, saveSession: () => "demo", sendCode: async () => ({ phoneCodeHash: "h" }),
+    signIn: async () => "ok" as const, checkPassword: async () => {}, me: async () => ({ id: "42", name: "Rafay", username: "rafay" }),
+    dialogs: async () => [{ id: "777", title: "Omar (Client)", unreadCount: 0, isUser: true, isGroup: false, isChannel: false, entity: {}, date: Math.floor(Date.now() / 1000) }],
+    messages: async () => [], send: async () => ({ id: Date.now() % 100000, date: Math.floor(Date.now() / 1000) }), logOut: async () => {},
+  });
 }

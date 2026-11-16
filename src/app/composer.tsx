@@ -7,6 +7,7 @@ import { Icon } from "./ui";
 type Mode = "reply" | "reply_all" | "forward";
 export type Preset = { to: string[]; cc: string[]; subject: string; body: string };
 
+const APP_NAME: Record<string, string> = { gmail: "Gmail", outlook: "Outlook", slack: "Slack", whatsapp: "WhatsApp", telegram: "Telegram" };
 const LABEL: Record<Mode, string> = { reply: "Reply", reply_all: "Reply all", forward: "Forward" };
 const field = "w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-neutral-400 focus:ring-2 focus:ring-neutral-200 dark:border-neutral-700 dark:bg-neutral-900 dark:focus:border-neutral-500 dark:focus:ring-neutral-800";
 const btn = "inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800";
@@ -47,11 +48,38 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
     } finally { setBusy(false); }
   }
 
-  if (provider !== "gmail") {
+  const appName = APP_NAME[provider] ?? provider;
+  if (provider === "whatsapp" || provider === "telegram") {
+    return (
+      <form className="space-y-2" onSubmit={async (e) => {
+        e.preventDefault();
+        if (!body.trim()) return setErr("Write a message first");
+        setBusy(true); setErr(null); setDone(null);
+        try {
+          const res = await fetch("/api/compose", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ thread_id: threadId, body, send: true }) });
+          const j = await res.json().catch(() => ({}));
+          if (!res.ok) return setErr(j.error ?? `Failed (${res.status})`);
+          setBody(""); setDone("Sent"); router.refresh();
+        } finally { setBusy(false); }
+      }}>
+        <label htmlFor="c-chat" className="sr-only">Message</label>
+        <div className="flex items-end gap-2">
+          <textarea id="c-chat" rows={2} className={`${field} min-h-11 resize-y`} value={body} maxLength={4096} disabled={!canSend}
+            onChange={(e) => setBody(e.target.value)} placeholder={canSend ? `Message on ${appName}…` : "This chat is read-only"}
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) (e.currentTarget.form as HTMLFormElement).requestSubmit(); }} />
+          <button disabled={busy || !canSend} className="rounded-lg bg-neutral-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-neutral-700 disabled:opacity-50 dark:bg-white dark:text-neutral-900">{busy ? "Sending…" : "Send"}</button>
+        </div>
+        {err && <p className="text-sm text-red-600">{err}</p>}
+        {done && <p role="status" className="text-sm text-emerald-700 dark:text-emerald-300">{done}</p>}
+        {provider === "whatsapp" && <p className="text-xs text-neutral-500">WhatsApp only allows free-form replies within 24 hours of the customer&apos;s last message.</p>}
+      </form>
+    );
+  }
+  if (provider !== "gmail" && provider !== "outlook") {
     return (
       <div className="flex flex-wrap items-center gap-2">
-        {openHref && <a className={btn} href={openHref} target="_blank" rel="noopener noreferrer"><Icon name="external" /> Open in Slack</a>}
-        <span className="text-xs text-neutral-500">Replying to Slack from Unified Box isn&apos;t available yet.</span>
+        {openHref && <a className={btn} href={openHref} target="_blank" rel="noopener noreferrer"><Icon name="external" /> Open in {appName}</a>}
+        <span className="text-xs text-neutral-500">Replying to {appName} from Unified Box isn&apos;t available yet.</span>
       </div>
     );
   }
@@ -63,7 +91,7 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
           <button className={btn} onClick={() => open("reply")}><Icon name="reply" /> Reply</button>
           {showReplyAll && <button className={btn} onClick={() => open("reply_all")}><Icon name="replyAll" /> Reply all</button>}
           <button className={btn} onClick={() => open("forward")}><Icon name="forward" /> Forward</button>
-          {openHref && <a className={`${btn} ml-auto`} href={openHref} target="_blank" rel="noopener noreferrer" title="Open this conversation in Gmail"><Icon name="external" /> Gmail</a>}
+          {openHref && <a className={`${btn} ml-auto`} href={openHref} target="_blank" rel="noopener noreferrer" title={`Open this conversation in ${appName}`}><Icon name="external" /> {appName}</a>}
           {done && <span role="status" className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-sm font-medium text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"><Icon name="check" /> {done}</span>}
         </div>
       )}
@@ -76,7 +104,7 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
           </div>
           {!canSend && (
             <p className="mb-2 rounded-lg bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/60 dark:text-amber-200">
-              This inbox is connected <b>read-only</b>, so it can&apos;t send yet. <a className="font-semibold underline" href={reconnectHref}>Reconnect it with sending</a> (one click on Google&apos;s screen), then reply here.
+              This inbox is connected <b>read-only</b>, so it can&apos;t send yet. <a className="font-semibold underline" href={reconnectHref}>Reconnect it with sending</a> (one click on the sign-in screen), then reply here.
             </p>
           )}
           <div className="space-y-2">

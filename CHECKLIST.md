@@ -23,6 +23,7 @@ Two production deploys **failed** because the `CRON_SECRET` value in Vercel cont
   3. **Basic Information** → copy **Client ID** and **Client Secret**.
   4. **Manage Distribution** → activate **public distribution** (needed to install into client workspaces; no Marketplace listing required).
   5. Vercel → project → Settings → Environment Variables: add `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET` (Sensitive), then **Redeploy**.
+- [ ] **(you) New connectors: Outlook, WhatsApp Business, Telegram**: step-by-step in `docs/CONNECTORS.md`. Each needs a few keys in Vercel and a redeploy; until then its card says "Coming soon". Migration `0006` (new providers) is already applied.
 - [ ] **(you) Add every Gmail you want to test** as a Test user in Google Cloud → OAuth consent screen → Audience.
 - [ ] **(you, recommended) Fix sign-in email limits**: Supabase's built-in email sender allows only a few emails per hour. Supabase → Authentication → SMTP Settings → add a provider (Resend, Postmark, etc.).
 

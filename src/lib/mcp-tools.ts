@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { canReply, isEmailProvider, type ProviderId } from "./providers";
 import { replyRecipients } from "./reply";
 import { syncAccount } from "./sync";
 import { supabaseAdmin } from "./supabase/admin";
@@ -97,7 +98,14 @@ export const tools: Tool[] = [
       const { data: t } = await db.from("threads").select("id, subject, account_id, accounts(external_id, provider)").eq("id", a.thread_id).eq("user_id", uid).maybeSingle();
       if (!t) return { error: "thread not found" };
       const acct = t.accounts as unknown as { external_id: string; provider: string } | null;
-      if (acct?.provider !== "gmail") return { error: "Drafting replies is only supported for Gmail conversations right now." };
+      if (!acct || !canReply(acct.provider as ProviderId)) return { error: `Drafting replies isn't supported for ${acct?.provider ?? "this"} conversations yet.` };
+      if (!isEmailProvider(acct.provider as ProviderId)) {
+        // Chat apps: the draft goes back into the same chat once the user approves it.
+        const { data: d, error } = await db.from("drafts").insert({ user_id: uid, account_id: t.account_id, thread_id: t.id, mode: "reply", to_addrs: [], cc_addrs: [], subject: t.subject || "Chat", body: a.body.slice(0, 4096), created_by: "claude" }).select("id").single();
+        if (error) return { error: error.message };
+        await db.from("audit_log").insert({ user_id: uid, actor: "claude", action: "draft.created", target: d.id, meta: { provider: acct.provider } });
+        return { draft_id: d.id, status: "pending", message: "Draft saved. It has NOT been sent. The user can review, edit and send it in Unified Box." };
+      }
       const { data: msgs } = await db.from("messages").select("from_addr, to_addrs, cc_addrs, is_outgoing, sent_at").eq("thread_id", t.id).eq("user_id", uid);
       const mode = a.reply_all ? "reply_all" : "reply";
       const { to, cc } = replyRecipients(mode, msgs ?? [], acct.external_id);

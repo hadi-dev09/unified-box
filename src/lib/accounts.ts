@@ -2,7 +2,7 @@ import { decrypt } from "./crypto";
 import { slackRevoke } from "./slack";
 import { supabaseAdmin } from "./supabase/admin";
 
-/** Removes a connected account and everything synced from it (DB cascades), and revokes Google's grant. */
+/** Removes a connected account and everything synced from it (DB cascades), and revokes the provider grant/session where possible. */
 export async function disconnectAccount(userId: string, accountId: string): Promise<{ ok: boolean; error?: string }> {
   const db = supabaseAdmin();
   const { data: acct } = await db.from("accounts").select("id, provider, external_id").eq("id", accountId).eq("user_id", userId).maybeSingle();
@@ -28,6 +28,11 @@ export async function disconnectAccount(userId: string, accountId: string): Prom
       const { data: sec } = await db.from("account_secrets").select("tokens_enc").eq("account_id", accountId).maybeSingle();
       if (sec) await slackRevoke(JSON.parse(decrypt(sec.tokens_enc)).access_token);
     } catch { /* best effort */ }
+  }
+
+  if (acct.provider === "telegram") {
+    // End the Telegram session so it disappears from the user's active devices.
+    try { const { telegramLogOut } = await import("./telegram"); await telegramLogOut(accountId); } catch { /* best effort */ }
   }
 
   const { error } = await db.from("accounts").delete().eq("id", accountId).eq("user_id", userId);

@@ -27,5 +27,5 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   // Skip static assets and the token-authenticated API surface (MCP, OAuth, discovery, cron).
-  matcher: ["/((?!_next/static|_next/image|favicon|icon|apple-touch-icon|manifest|api/mcp|api/oauth|\\.well-known|.*\\.(?:png|svg|ico|webmanifest)$).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon|icon|apple-touch-icon|manifest|api/mcp|api/oauth|api/webhooks|\\.well-known|.*\\.(?:png|svg|ico|webmanifest)$).*)"],
 };
