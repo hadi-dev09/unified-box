@@ -92,7 +92,7 @@ export function SidebarNav({ accounts, clients, perAcct, perClient, perProvider,
       )}
 
       <nav className="mt-auto space-y-0.5 border-t border-[var(--border)] pt-3">
-        <Link href="/approvals" className={item(path.startsWith("/approvals"))}><Icon name="spark" /> AI drafts {pending ? <span className="ml-auto rounded-full bg-amber-500 px-1.5 text-[11px] font-semibold text-white">{pending}</span> : null}</Link>
+        <Link href="/approvals" className={item(path.startsWith("/approvals"))}><Icon name="spark" /> Drafts &amp; scheduled {pending ? <span className="ml-auto rounded-full bg-amber-500 px-1.5 text-[11px] font-semibold text-white">{pending}</span> : null}</Link>
         <Link href="/connect-ai" className={item(path.startsWith("/connect-ai"))}><Icon name="plug" /> Connect your AI</Link>
         <Link href="/settings" className={item(path.startsWith("/settings"))}><Icon name="settings" /> Settings</Link>
         <div className="flex items-center gap-2 px-1.5 pt-2">

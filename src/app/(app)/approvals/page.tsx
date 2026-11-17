@@ -7,6 +7,7 @@ import { LocalTime } from "../../local-time";
 import { accountName, ChannelTag, Icon, shortName } from "../../ui";
 
 type Draft = {
+  send_at: string | null;
   id: string; thread_id: string | null; to_addrs: string[]; subject: string; body: string; status: string; created_by: string; error: string | null; created_at: string;
   accounts: { display_name: string; label: string | null; provider: string } | null; threads: { subject: string | null; last_from: string | null } | null;
 };
@@ -16,27 +17,30 @@ export default async function Approvals({ searchParams }: { searchParams: Promis
   const user = await currentUser();
   if (!user) redirect("/login");
   const sb = await supabaseServer();
-  const show = (await searchParams).show === "history" ? "history" : "pending";
-  let q = sb.from("drafts").select("id, thread_id, to_addrs, subject, body, status, created_by, error, created_at, accounts(display_name, label, provider), threads(subject, last_from)").order("created_at", { ascending: false }).limit(60);
-  q = show === "pending" ? q.eq("status", "pending") : q.neq("status", "pending");
+  const sp = (await searchParams).show;
+  const show = sp === "history" ? "history" : sp === "scheduled" ? "scheduled" : "pending";
+  let q = sb.from("drafts").select("id, thread_id, to_addrs, subject, body, status, created_by, error, created_at, send_at, accounts(display_name, label, provider), threads(subject, last_from)").eq("user_id", user.id).limit(60);
+  q = show === "pending" ? q.eq("status", "pending").order("created_at", { ascending: false })
+    : show === "scheduled" ? q.eq("status", "scheduled").order("send_at", { ascending: true })
+    : q.not("status", "in", "(pending,scheduled)").order("created_at", { ascending: false });
   const drafts = ((await q).data ?? []) as unknown as Draft[];
   const tab = (k: string, label: string) => (
-    <Link href={k === "pending" ? "/approvals" : "/approvals?show=history"} className={`rounded-full px-3 py-1.5 text-[13px] font-medium ${show === k ? "bg-[var(--text)] text-[var(--bg)]" : "muted hover:bg-[var(--surface-2)]"}`}>{label}</Link>
+    <Link href={k === "pending" ? "/approvals" : `/approvals?show=${k}`} className={`rounded-full px-3 py-1.5 text-[13px] font-medium ${show === k ? "bg-[var(--text)] text-[var(--bg)]" : "muted hover:bg-[var(--surface-2)]"}`}>{label}</Link>
   );
   const statusChip: Record<string, string> = { sent: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300", rejected: "bg-[var(--surface-2)] muted", failed: "bg-red-500/12 text-red-700 dark:text-red-300", approved: "bg-sky-500/12 text-sky-700" };
 
   return (
-    <PageFrame title="AI drafts">
+    <PageFrame title="Drafts & scheduled">
     <main className="mx-auto max-w-3xl px-4 pb-16 pt-6 md:px-6">
       <div className="card mb-5 flex gap-3 p-4">
         <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-500/15 text-violet-600 dark:text-violet-300"><Icon name="spark" /></span>
         <p className="text-sm muted">When you ask Claude, ChatGPT or another assistant to <b className="text-[var(--text)]">write a reply</b>, it lands here and inside the conversation, and it is <b className="text-[var(--text)]">never sent until you press Send</b>. Open a draft to read the conversation, tweak the text and send it in one place. Replies you write yourself send straight away.</p>
       </div>
-      <div className="mb-3 flex gap-1">{tab("pending", "Waiting for you")}{tab("history", "History")}</div>
+      <div className="mb-3 flex gap-1">{tab("pending", "AI drafts")}{tab("scheduled", "Scheduled")}{tab("history", "History")}</div>
       {drafts.length === 0 && (
         <div className="card p-8 text-center">
-          <p className="font-semibold">{show === "pending" ? "No drafts waiting" : "No history yet"}</p>
-          <p className="mt-1 text-sm muted">Try asking your assistant: “Draft a reply to the latest email that needs a response.”</p>
+          <p className="font-semibold">{show === "pending" ? "No drafts waiting" : show === "scheduled" ? "Nothing scheduled" : "No history yet"}</p>
+          <p className="mt-1 text-sm muted">{show === "scheduled" ? "Use the clock button next to Send in any reply to send it later." : "Try asking your assistant: “Draft a reply to the latest email that needs a response.”"}</p>
         </div>
       )}
       <ul className="space-y-2">
@@ -48,7 +52,8 @@ export default async function Approvals({ searchParams }: { searchParams: Promis
                 {d.accounts && <ChannelTag provider={d.accounts.provider} label={shortName(accountName(d.accounts))} />}
                 <span>{d.created_by === "claude" ? "Written by your AI" : "Written by you"}</span>
                 <span>·</span><LocalTime iso={d.created_at} />
-                {d.status !== "pending" && <span className={`chip ${statusChip[d.status] ?? ""}`}>{d.status}</span>}
+                {d.status === "scheduled" && d.send_at ? <span className="chip bg-sky-500/12 text-sky-700 dark:text-sky-300">Sends <LocalTime iso={d.send_at} mode="full" /></span>
+                  : d.status !== "pending" && <span className={`chip ${statusChip[d.status] ?? ""}`}>{d.status === "rejected" ? "cancelled/discarded" : d.status}</span>}
               </div>
               <p className="mt-1.5 truncate font-semibold">{d.threads?.subject || d.subject}</p>
               <p className="truncate text-xs muted">{d.to_addrs.length ? `To ${d.to_addrs.join(", ")}` : `Reply to ${d.threads?.last_from ?? "the chat"}`}</p>
@@ -61,7 +66,7 @@ export default async function Approvals({ searchParams }: { searchParams: Promis
               {href ? (
                 <Link href={href} className="card group block p-4 transition hover:border-[var(--border-strong)]">
                   {inner}
-                  {d.status === "pending" && <span className="mt-3 inline-flex items-center gap-1 text-sm font-semibold text-[var(--accent-text)]">Review &amp; send in conversation <Icon name="chevronRight" className="h-4 w-4 transition group-hover:translate-x-0.5" /></span>}
+                  {(d.status === "pending" || d.status === "scheduled") && <span className="mt-3 inline-flex items-center gap-1 text-sm font-semibold text-[var(--accent-text)]">{d.status === "scheduled" ? "Open to send now or cancel" : "Review & send in conversation"} <Icon name="chevronRight" className="h-4 w-4 transition group-hover:translate-x-0.5" /></span>}
                 </Link>
               ) : <div className="card p-4">{inner}</div>}
             </li>

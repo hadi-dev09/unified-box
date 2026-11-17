@@ -81,7 +81,7 @@ class Query implements PromiseLike<Result> {
   gt(c: string, v: any) { this.filters.push((r) => r[c] != null && cmp(r[c], v) > 0); return this; } // eslint-disable-line @typescript-eslint/no-explicit-any
   gte(c: string, v: any) { this.filters.push((r) => r[c] != null && cmp(r[c], v) >= 0); return this; } // eslint-disable-line @typescript-eslint/no-explicit-any
   lte(c: string, v: any) { this.filters.push((r) => r[c] != null && cmp(r[c], v) <= 0); return this; } // eslint-disable-line @typescript-eslint/no-explicit-any
-  not(c: string, op: string, v: any) { if (op === "is") this.filters.push((r) => (r[c] ?? null) !== v); else this.filters.push((r) => r[c] !== v); return this; } // eslint-disable-line @typescript-eslint/no-explicit-any
+  not(c: string, op: string, v: any) { if (op === "is") this.filters.push((r) => (r[c] ?? null) !== v); else if (op === "in") { const set = String(v).replace(/^\(|\)$/g, "").split(","); this.filters.push((r) => !set.includes(String(r[c]))); } else this.filters.push((r) => r[c] !== v); return this; } // eslint-disable-line @typescript-eslint/no-explicit-any
   lt(c: string, v: any) { this.filters.push((r) => r[c] != null && cmp(r[c], v) < 0); return this; } // eslint-disable-line @typescript-eslint/no-explicit-any
   ilike(c: string, p: string) { const re = likeToRegex(p); this.filters.push((r) => re.test(String(r[c] ?? ""))); return this; }
   or(expr: string) {

@@ -92,6 +92,8 @@ export function installDemoNetwork() {
     const ok = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "content-type": "application/json" } });
     if (url.includes("gmail.googleapis.com") && url.endsWith("/messages/send")) return ok({ id: `demo-${Date.now()}` });
     if (url.includes("graph.facebook.com") && url.endsWith("/messages")) return ok({ messages: [{ id: `wamid.demo${Date.now()}` }] });
+    if (url === "https://api.openai.com/v1/models") return ok({ data: [{ id: "gpt-5" }, { id: "gpt-5-mini" }] });
+    if (url === "https://api.openai.com/v1/chat/completions") return ok({ choices: [{ message: { content: "Hi Sarah, Thursday works for the review. Thanks!" }, finish_reason: "stop" }] });
     if (url.startsWith("https://api.anthropic.com/v1/models")) return ok({ data: [{ id: "claude-opus-5-5", type: "model" }], has_more: false, first_id: "a", last_id: "a" });
     if (url.startsWith("https://api.anthropic.com/v1/messages")) {
       const ask = String(JSON.parse(String(init?.body ?? "{}")).messages?.[0]?.content ?? "");

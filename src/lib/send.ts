@@ -37,7 +37,13 @@ export async function decideDraft(userId: string, draftId: string, action: "appr
 
   await db.from("audit_log").insert({ user_id: userId, actor: "user", action: `draft.${action}`, target: draftId, meta: { to: d.to_addrs, cc: d.cc_addrs ?? [], created_by: d.created_by, mode: d.mode, edited: Object.keys(edits).length > 0 } });
   if (action === "reject") return { status: 200, body: { status: "rejected" } };
+  return deliverDraft(userId, d);
+}
 
+/** Sends a draft that has already been claimed (approved, or a scheduled one whose time came). */
+async function deliverDraft(userId: string, d: Record<string, any>): Promise<Result> { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const db = supabaseAdmin();
+  const draftId = d.id as string;
   const { data: acct } = await db.from("accounts").select("id, user_id, external_id, can_send, provider").eq("id", d.account_id).single();
   try {
     const prov = acct?.provider as ProviderId | undefined;
@@ -101,4 +107,39 @@ export async function decideDraft(userId: string, draftId: string, action: "appr
     await db.from("drafts").update({ status: "failed", error: (e as Error).message.slice(0, 300) }).eq("id", draftId);
     return { status: 502, body: { status: "failed", error: (e as Error).message } };
   }
+}
+
+/** A human-written reply to send later. Validation already happened in the compose route. */
+export function validSendAt(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const t = new Date(v);
+  if (Number.isNaN(t.getTime()) || t.getTime() < Date.now() + 30_000 || t.getTime() > Date.now() + 366 * 86400_000) return null;
+  return t.toISOString();
+}
+
+/** Cancel a scheduled reply (it goes back to nothing) or send it right now. Only the owner, only while still scheduled. */
+export async function decideScheduled(userId: string, draftId: string, action: "cancel" | "send_now"): Promise<Result> {
+  const db = supabaseAdmin();
+  const { data: d } = await db.from("drafts")
+    .update({ status: action === "cancel" ? "rejected" : "sending", decided_at: new Date().toISOString() })
+    .eq("id", draftId).eq("user_id", userId).eq("status", "scheduled")
+    .select("*").maybeSingle();
+  if (!d) return { status: 404, body: { error: "scheduled message not found, or already sent" } };
+  await db.from("audit_log").insert({ user_id: userId, actor: "user", action: `scheduled.${action}`, target: draftId });
+  if (action === "cancel") return { status: 200, body: { status: "cancelled" } };
+  return deliverDraft(userId, d);
+}
+
+/** Background job: sends every scheduled reply whose time has come. Each is claimed atomically so it goes out once. */
+export async function sendDueScheduled(limit = 25) {
+  const db = supabaseAdmin();
+  const { data: due } = await db.from("drafts").select("id, user_id").eq("status", "scheduled").lte("send_at", new Date().toISOString()).order("send_at").limit(limit);
+  let sent = 0;
+  for (const row of (due ?? []) as { id: string; user_id: string }[]) {
+    const { data: d } = await db.from("drafts").update({ status: "sending", decided_at: new Date().toISOString() }).eq("id", row.id).eq("status", "scheduled").select("*").maybeSingle();
+    if (!d) continue; // someone else (or "send now") got it first
+    const r = await deliverDraft(row.user_id, d);
+    if (r.status === 200) sent++;
+  }
+  return { due: (due ?? []).length, sent };
 }

@@ -1,6 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { decrypt, encrypt } from "./crypto";
 import { supabaseAdmin } from "./supabase/admin";
+import { openAiComplete, validateOpenAiKey } from "./ai-openai";
+
+export type AiProvider = "anthropic" | "openai";
 
 /** Model used for the in-app assistant (billed to the user's own Anthropic account). */
 export const AI_MODEL = "claude-opus-5-5";
@@ -37,16 +40,23 @@ export async function validateClaudeKey(key: string): Promise<{ ok: true } | { o
   }
 }
 
-export async function saveClaudeKey(userId: string, key: string) {
+export async function saveClaudeKey(userId: string, key: string, provider: AiProvider = "anthropic", model: string | null = null) {
   const k = key.trim();
-  await supabaseAdmin().from("user_ai_keys").upsert({ user_id: userId, provider: "anthropic", key_enc: encrypt(k), key_hint: `…${k.slice(-4)}`, created_at: new Date().toISOString(), last_used_at: null });
+  await supabaseAdmin().from("user_ai_keys").upsert({ user_id: userId, provider, model, key_enc: encrypt(k), key_hint: `…${k.slice(-4)}`, created_at: new Date().toISOString(), last_used_at: null });
+}
+
+/** Validates a key for either provider; for OpenAI also finds a usable chat model. */
+export async function validateAiKey(provider: AiProvider, key: string): Promise<{ ok: true; model: string } | { ok: false; error: string }> {
+  if (provider === "openai") return validateOpenAiKey(key);
+  const v = await validateClaudeKey(key);
+  return v.ok ? { ok: true, model: AI_MODEL } : v;
 }
 export async function removeClaudeKey(userId: string) {
   await supabaseAdmin().from("user_ai_keys").delete().eq("user_id", userId);
 }
-export async function aiKeyInfo(userId: string): Promise<{ hint: string; lastUsed: string | null } | null> {
-  const { data } = await supabaseAdmin().from("user_ai_keys").select("key_hint, last_used_at").eq("user_id", userId).maybeSingle();
-  return data ? { hint: data.key_hint as string, lastUsed: (data.last_used_at as string | null) ?? null } : null;
+export async function aiKeyInfo(userId: string): Promise<{ hint: string; lastUsed: string | null; provider: AiProvider; model: string } | null> {
+  const { data } = await supabaseAdmin().from("user_ai_keys").select("key_hint, last_used_at, provider, model").eq("user_id", userId).maybeSingle();
+  return data ? { hint: data.key_hint as string, lastUsed: (data.last_used_at as string | null) ?? null, provider: (data.provider as AiProvider) ?? "anthropic", model: (data.model as string | null) ?? AI_MODEL } : null;
 }
 
 type Msg = { from_name: string | null; from_addr: string | null; is_outgoing: boolean; sent_at: string; body_text: string | null };
@@ -64,8 +74,8 @@ When asked to summarize: give 2 to 5 short bullet points, then one line starting
  * nothing is sent from here.
  */
 export async function runAssist(userId: string, input: { task: AiTask; provider: string; subject: string; messages: Msg[]; instructions?: string; text?: string }) {
-  const { data } = await supabaseAdmin().from("user_ai_keys").select("key_enc").eq("user_id", userId).maybeSingle();
-  if (!data) return { ok: false as const, error: "Add your Claude API key in Settings → AI assistant first.", needsKey: true };
+  const { data } = await supabaseAdmin().from("user_ai_keys").select("key_enc, provider, model").eq("user_id", userId).maybeSingle();
+  if (!data) return { ok: false as const, error: "Add your Claude or OpenAI API key in Settings → AI assistant first.", needsKey: true };
   const apiKey = decrypt(data.key_enc as string);
   const kind = ["gmail", "outlook"].includes(input.provider) ? "email" : `${input.provider} chat`;
 
@@ -86,6 +96,11 @@ export async function runAssist(userId: string, input: { task: AiTask; provider:
       ? `Rewrite my draft reply below. ${input.instructions ? `How: ${input.instructions}.` : "Make it clear, friendly and concise."} Keep its meaning; return only the rewritten message.\n\n<my_draft>\n${(input.text ?? "").slice(0, 8000)}\n</my_draft>`
       : `Write my reply to the latest message.${input.instructions ? ` What I want to say: ${input.instructions}` : ""}`;
 
+  if (data.provider === "openai") {
+    const r = await openAiComplete(apiKey, String(data.model ?? ""), SYSTEM, `${convo}\n\n${ask}`);
+    if (r.ok) await supabaseAdmin().from("user_ai_keys").update({ last_used_at: new Date().toISOString() }).eq("user_id", userId);
+    return r.ok ? { ok: true as const, text: r.text, truncated: r.truncated } : { ok: false as const, error: r.error, needsKey: Boolean(r.badKey) };
+  }
   const client = new Anthropic({ apiKey, maxRetries: 2, timeout: 60_000 });
   try {
     const res = await client.beta.messages.create({

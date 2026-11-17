@@ -212,10 +212,10 @@ export default async function Settings({ searchParams }: { searchParams: Promise
         })}
       </div>
 
-      <div id="ai" className={`${section} scroll-mt-20`}><div><h2 className="text-lg font-semibold tracking-tight">AI assistant</h2><p className="text-sm muted">Draft, improve and summarize replies right inside Unified Box with your own Claude API key. Usage is billed to your Anthropic account, and nothing is ever sent without you pressing Send.</p></div></div>
+      <div id="ai" className={`${section} scroll-mt-20`}><div><h2 className="text-lg font-semibold tracking-tight">AI assistant</h2><p className="text-sm muted">Draft, improve and summarize replies right inside Unified Box with your own Claude or OpenAI API key. Usage is billed to that account, and nothing is ever sent without you pressing Send.</p></div></div>
       <section className="card p-4">
-        <AiKeyForm hint={aiKey?.hint ?? null} />
-        {!aiKey && <p className="mt-3 text-xs muted">Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" className="font-medium text-[var(--accent-text)] hover:underline">console.anthropic.com → API keys</a> (needs a little prepaid credit). It&apos;s checked, then stored encrypted; Unified Box never shows it again.</p>}
+        <AiKeyForm hint={aiKey?.hint ?? null} provider={aiKey?.provider} model={aiKey?.model} />
+        {!aiKey && <p className="mt-3 text-xs muted">Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" className="font-medium text-[var(--accent-text)] hover:underline">console.anthropic.com</a> (Claude) or <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="font-medium text-[var(--accent-text)] hover:underline">platform.openai.com</a> (OpenAI); both need a little prepaid credit. A ChatGPT Plus subscription is not an API key. The key is checked, then stored encrypted; Unified Box never shows it again.</p>}
       </section>
 
       <div className={section}><div><h2 className="text-lg font-semibold tracking-tight">AI apps</h2><p className="text-sm muted">Connect Claude, ChatGPT and others, and see or revoke their access, on <Link href="/connect-ai" className="font-medium text-[var(--accent-text)] hover:underline">Connect your AI</Link>.</p></div></div>

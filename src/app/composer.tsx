@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { parseAddressField } from "@/lib/reply";
 import { AiHelper } from "./ai-helper";
+import { ScheduleButton, whenLabel } from "./schedule-button";
 import { Icon } from "./ui";
 
 type Mode = "reply" | "reply_all" | "forward";
@@ -33,35 +34,36 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
     setTimeout(() => { bodyRef.current?.focus(); bodyRef.current?.setSelectionRange(0, 0); bodyRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, 30);
   }
 
-  async function submit() {
+  async function submit(sendAt?: string) {
     const t = parseAddressField(to), c = parseAddressField(cc);
     if (t.invalid.length || c.invalid.length) return setErr(`Not a valid email: ${[...t.invalid, ...c.invalid].join(", ")}`);
     if (!t.valid.length) return setErr("Add at least one recipient");
     if (!body.trim()) return setErr("Write a message first");
     setBusy(true); setErr(null);
     try {
-      const res = await fetch("/api/compose", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ thread_id: threadId, mode, to: t.valid, cc: c.valid, subject, body, send: true }) });
+      const res = await fetch("/api/compose", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ thread_id: threadId, mode, to: t.valid, cc: c.valid, subject, body, send: true, ...(sendAt ? { send_at: sendAt } : {}) }) });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) return setErr(j.error ?? `Failed (${res.status})`);
-      setDone(`Sent to ${t.valid.slice(0, 2).join(", ")}${t.valid.length > 2 ? "…" : ""}`); setMode(null);
+      setDone(sendAt ? `Scheduled for ${whenLabel(sendAt)}` : `Sent to ${t.valid.slice(0, 2).join(", ")}${t.valid.length > 2 ? "…" : ""}`); setMode(null);
       router.refresh();
+    } finally { setBusy(false); }
+  }
+
+  async function sendChat(sendAt?: string) {
+    if (!body.trim()) return setErr("Write a message first");
+    setBusy(true); setErr(null); setDone(null);
+    try {
+      const res = await fetch("/api/compose", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ thread_id: threadId, body, send: true, ...(sendAt ? { send_at: sendAt } : {}) }) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) return setErr(j.error ?? `Failed (${res.status})`);
+      setBody(""); setDone(sendAt ? `Scheduled for ${whenLabel(sendAt)}` : "Sent"); router.refresh();
     } finally { setBusy(false); }
   }
 
   const appName = APP_NAME[provider] ?? provider;
   if (provider === "whatsapp" || provider === "telegram" || provider === "slack") {
     return (
-      <form className="space-y-2" onSubmit={async (e) => {
-        e.preventDefault();
-        if (!body.trim()) return setErr("Write a message first");
-        setBusy(true); setErr(null); setDone(null);
-        try {
-          const res = await fetch("/api/compose", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ thread_id: threadId, body, send: true }) });
-          const j = await res.json().catch(() => ({}));
-          if (!res.ok) return setErr(j.error ?? `Failed (${res.status})`);
-          setBody(""); setDone("Sent"); router.refresh();
-        } finally { setBusy(false); }
-      }}>
+      <form className="space-y-2" onSubmit={(e) => { e.preventDefault(); sendChat(); }}>
         {canSend && <AiHelper threadId={threadId} hasKey={hasAiKey} text={body} setText={setBody} />}
         <label htmlFor="c-chat" className="sr-only">Message</label>
         <div className="flex items-end gap-2">
@@ -69,6 +71,7 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
             onChange={(e) => setBody(e.target.value)} placeholder={canSend ? `Message on ${appName}…` : `Connected read-only. Reconnect to reply here.`}
             onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) (e.currentTarget.form as HTMLFormElement).requestSubmit(); }} />
           <button disabled={busy || !canSend} className="btn-primary !py-2.5">{busy ? "Sending…" : "Send"}</button>
+          {canSend && <ScheduleButton disabled={busy || !body.trim()} onPick={(iso) => sendChat(iso)} />}
         </div>
         {!canSend && <p className="text-xs text-amber-800 dark:text-amber-300">Replies are off for this connection. <a className="font-semibold underline" href={reconnectHref}>Reconnect with replies</a>{openHref && <> or <a className="underline" href={openHref} target="_blank" rel="noopener noreferrer">open in {appName}</a></>}.</p>}
         {err && <p className="text-sm text-red-600">{err}</p>}
@@ -136,6 +139,7 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
                 {busy ? "Sending…" : "Send"}
               </button>
             )}
+            {canSend && <ScheduleButton disabled={busy} onPick={(iso) => submit(iso)} />}
             <button disabled={busy} onClick={() => setMode(null)} className="px-2 text-sm text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200">Discard</button>
           </div>
         </div>

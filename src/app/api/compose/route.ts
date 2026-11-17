@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { canReply, isEmailProvider, provider, type ProviderId } from "@/lib/providers";
 import { isEmail } from "@/lib/reply";
-import { decideDraft, validateEdits } from "@/lib/send";
+import { decideDraft, validateEdits, validSendAt } from "@/lib/send";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { supabaseServer } from "@/lib/supabase/server";
 
@@ -49,11 +49,22 @@ export async function POST(req: NextRequest) {
     body = v.edits.body; subject = t.subject || "Chat";
   }
 
+  // Schedule send: keep it until send_at; the background job sends it then.
+  let sendAt: string | null = null;
+  if (b.send_at !== undefined && b.send_at !== null) {
+    sendAt = validSendAt(b.send_at);
+    if (!sendAt) return bad("Pick a send time at least a minute from now (and within a year).");
+    if (!acct.can_send) return bad("This account is read-only. Reconnect it with sending enabled to schedule messages.");
+  }
   const { data: d, error } = await db.from("drafts").insert({
     user_id: user.id, account_id: t.account_id, thread_id: t.id, mode, to_addrs: to, cc_addrs: cc,
-    subject, body, created_by: "user",
+    subject, body, created_by: "user", ...(sendAt ? { status: "scheduled", send_at: sendAt } : {}),
   }).select("id").single();
   if (error || !d) return bad("could not save", 500);
+  if (sendAt) {
+    await db.from("audit_log").insert({ user_id: user.id, actor: "user", action: "scheduled.created", target: d.id, meta: { send_at: sendAt } });
+    return NextResponse.json({ status: "scheduled", send_at: sendAt, draft_id: d.id });
+  }
 
   if (!b.send) return NextResponse.json({ status: "pending", draft_id: d.id });
   const r = await decideDraft(user.id, d.id, "approve");

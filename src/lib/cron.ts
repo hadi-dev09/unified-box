@@ -25,6 +25,8 @@ export async function backgroundSync(budgetMs = 50_000) {
   const db = supabaseAdmin();
   const now = new Date().toISOString();
   await db.from("threads").update({ snoozed_until: null, unread: true }).lte("snoozed_until", now);
+  const { sendDueScheduled } = await import("./send");
+  const scheduled = await sendDueScheduled().catch(() => ({ due: 0, sent: 0 }));
   const { data } = await db.from("accounts").select("id, last_synced_at, provider").in("status", ["connected", "error"]);
   const due = (data ?? [])
     .filter((a: { last_synced_at: string | null; provider: string }) => a.provider !== "whatsapp" && (!a.last_synced_at || Date.now() - new Date(a.last_synced_at).getTime() > dueAfterMs(a.provider)))
@@ -35,5 +37,5 @@ export async function backgroundSync(budgetMs = 50_000) {
     await syncAccount(a.id).catch(() => {});
     done++;
   });
-  return { due: due.length, done };
+  return { due: due.length, done, scheduled };
 }

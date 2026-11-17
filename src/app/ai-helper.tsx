@@ -19,7 +19,7 @@ export function AiHelper({ threadId, hasKey, text, setText }: { threadId: string
   const [undo, setUndo] = useState<string | null>(null);
 
   if (!hasKey) {
-    return <Link href="/settings#ai" className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--accent-text)] hover:underline"><Icon name="spark" className="h-3.5 w-3.5" /> Write with AI: add your Claude key</Link>;
+    return <Link href="/settings#ai" className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--accent-text)] hover:underline"><Icon name="spark" className="h-3.5 w-3.5" /> Write with AI: add your AI key</Link>;
   }
   async function run(task: "draft" | "improve", instructions?: string) {
     setBusy(task === "draft" ? "Writing…" : "Improving…"); setErr(null);

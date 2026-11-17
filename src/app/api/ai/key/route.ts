@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { removeClaudeKey, saveClaudeKey, validateClaudeKey } from "@/lib/ai-assist";
+import { removeClaudeKey, saveClaudeKey, validateAiKey, type AiProvider } from "@/lib/ai-assist";
 import { currentUser } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
@@ -7,13 +7,15 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 export async function POST(req: NextRequest) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  const { key } = (await req.json().catch(() => ({}))) as { key?: unknown };
+  const { key, provider: p } = (await req.json().catch(() => ({}))) as { key?: unknown; provider?: unknown };
   if (typeof key !== "string") return NextResponse.json({ error: "Paste your API key" }, { status: 400 });
-  const v = await validateClaudeKey(key);
+  // Use the provider the person picked; a Claude-shaped key always means Claude.
+  const provider: AiProvider = key.trim().startsWith("sk-ant-") ? "anthropic" : p === "openai" ? "openai" : "anthropic";
+  const v = await validateAiKey(provider, key);
   if (!v.ok) return NextResponse.json({ error: v.error }, { status: 400 });
-  await saveClaudeKey(user.id, key);
-  await supabaseAdmin().from("audit_log").insert({ user_id: user.id, actor: "user", action: "ai_key.saved", target: "anthropic" });
-  return NextResponse.json({ ok: true, hint: `…${key.trim().slice(-4)}` });
+  await saveClaudeKey(user.id, key, provider, v.model);
+  await supabaseAdmin().from("audit_log").insert({ user_id: user.id, actor: "user", action: "ai_key.saved", target: provider });
+  return NextResponse.json({ ok: true, hint: `…${key.trim().slice(-4)}`, provider, model: v.model });
 }
 
 export async function DELETE() {

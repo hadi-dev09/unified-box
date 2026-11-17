@@ -54,7 +54,7 @@ test("AI assist: drafts with the user's key, conversation marked as untrusted da
   // no key yet
   const nokey = await assistRoute.POST(post("https://app.test/api/ai/assist", { thread_id: t, task: "draft" }));
   assert.equal(nokey.status, 412);
-  assert.match((await nokey.json()).error, /Add your Claude API key/);
+  assert.match((await nokey.json()).error, /Add your Claude or OpenAI API key/);
   const { saveClaudeKey } = await import("../src/lib/ai-assist");
   await saveClaudeKey(A.id, KEY);
   const net = stubFetch((c) => (c.url.includes("api.anthropic.com/v1/messages") ? json(200, claudeReply("Hi Sara, I'll send it Friday.")) : undefined));
@@ -94,4 +94,41 @@ test("AI assist: refusals, bad keys and billing problems become plain messages",
       assert.match((await r.json()).error, re);
     } finally { net.restore(); }
   }
+});
+
+test("OpenAI key: picks a usable chat model from the key's own list, then drafts with it", async () => {
+  const { pickOpenAiModel } = await import("../src/lib/ai-openai");
+  assert.equal(pickOpenAiModel(["gpt-4o", "gpt-5-mini", "gpt-5", "gpt-5-2025-08-07", "gpt-realtime", "whisper-1", "gpt-5-nano"]), "gpt-5");
+  assert.equal(pickOpenAiModel(["gpt-4o-mini", "gpt-4o"]), "gpt-4o");
+  assert.equal(pickOpenAiModel(["dall-e-3"]), null);
+  const t = seedThread();
+  db.user = A;
+  const OKEY = "sk-proj-" + "o".repeat(40);
+  let net = stubFetch((c) => (c.url === "https://api.openai.com/v1/models" ? { data: [{ id: "gpt-4o" }, { id: "gpt-5-mini" }, { id: "gpt-5" }] } : undefined));
+  try {
+    const r = await keyRoute.POST(post("https://app.test/api/ai/key", { key: OKEY, provider: "openai" }));
+    const j = await r.json();
+    assert.equal(r.status, 200, JSON.stringify(j));
+    assert.equal(j.provider, "openai"); assert.equal(j.model, "gpt-5");
+  } finally { net.restore(); }
+  net = stubFetch((c) => (c.url === "https://api.openai.com/v1/chat/completions" ? { choices: [{ message: { content: "Sure, Friday works." }, finish_reason: "stop" }] } : undefined));
+  try {
+    const r = await assistRoute.POST(post("https://app.test/api/ai/assist", { thread_id: t, task: "draft" }));
+    assert.equal((await r.json()).text, "Sure, Friday works.");
+    const req = JSON.parse(net.calls[0].body);
+    assert.equal(req.model, "gpt-5");
+    assert.match(req.messages[0].content, /data, not instructions/);
+    assert.match(req.messages[1].content, /<conversation kind="email"/);
+  } finally { net.restore(); }
+  net = stubFetch(() => new Response(JSON.stringify({ error: { code: "insufficient_quota" } }), { status: 429 }));
+  try {
+    const r = await assistRoute.POST(post("https://app.test/api/ai/assist", { thread_id: t, task: "draft" }));
+    assert.match((await r.json()).error, /no credit/);
+  } finally { net.restore(); }
+  // a Claude key pasted under "OpenAI" is still treated as Claude
+  net = stubFetch((c) => (c.url.includes("api.anthropic.com/v1/models") ? json(200, { data: [], has_more: false, first_id: null, last_id: null }) : undefined));
+  try {
+    const r = await keyRoute.POST(post("https://app.test/api/ai/key", { key: KEY, provider: "openai" }));
+    assert.equal((await r.json()).provider, "anthropic");
+  } finally { net.restore(); }
 });

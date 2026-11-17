@@ -13,6 +13,7 @@ import { MarkSeen } from "../mark-seen";
 import { MessageBody } from "../message-body";
 import { ReaderActions, ScrollToDraft } from "../reader-actions";
 import { SearchBox } from "../search-box";
+import { ScheduledCard } from "../schedule-button";
 import { MenuButton, SyncStatus } from "../shell";
 import { ThreadList, type ListThread } from "../thread-list";
 import { accountName, Avatar, channel, ChannelTag, Icon, shortName } from "../ui";
@@ -59,7 +60,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
     tq,
     thread ? sb.from("messages").select("id, from_name, from_addr, to_addrs, cc_addrs, sent_at, is_outgoing, body_text, subject").eq("thread_id", thread).order("sent_at") : Promise.resolve({ data: null }),
     thread ? sb.from("threads").select("id, subject, client_id, unread, external_id, account_id, starred").eq("id", thread).maybeSingle() : Promise.resolve({ data: null }),
-    thread ? sb.from("drafts").select("id, subject, body, to_addrs, cc_addrs, created_by").eq("thread_id", thread).eq("status", "pending").order("created_at") : Promise.resolve({ data: null }),
+    thread ? sb.from("drafts").select("id, subject, body, to_addrs, cc_addrs, created_by, status, send_at").eq("thread_id", thread).in("status", ["pending", "scheduled"]).order("created_at") : Promise.resolve({ data: null }),
   ]);
   const threads = (threadRows ?? []) as unknown as ThreadRow[];
   const hasAiKey = thread ? Boolean(await aiKeyInfo(user.id)) : false;
@@ -156,7 +157,10 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
                 </details>
               );
             })}
-            {((aiDrafts ?? []) as { id: string; subject: string; body: string; to_addrs: string[]; cc_addrs: string[] | null; created_by: string }[]).map((d) => (
+            {((aiDrafts ?? []) as { id: string; body: string; to_addrs: string[]; status: string; send_at: string | null }[]).filter((d) => d.status === "scheduled" && d.send_at).map((d) => (
+              <ScheduledCard key={d.id} id={d.id} sendAt={d.send_at!} body={d.body} to={d.to_addrs.length ? `To ${d.to_addrs.join(", ")}` : "In this chat"} />
+            ))}
+            {((aiDrafts ?? []) as { id: string; subject: string; body: string; to_addrs: string[]; cc_addrs: string[] | null; created_by: string; status: string }[]).filter((d) => d.status === "pending").map((d) => (
               <div key={d.id} id={`draft-${d.id}`} className={`scroll-mt-24 rounded-2xl border p-4 ${sp.draft === d.id ? "border-violet-400 ring-4 ring-violet-500/15" : "border-violet-300/60"} bg-violet-500/5`}>
                 <p className="mb-1 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-700 dark:text-violet-300">
                   <Icon name="spark" className="h-3.5 w-3.5" /> {d.created_by === "claude" ? "Reply drafted by your AI" : "Your saved draft"} · not sent yet
