@@ -80,7 +80,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
     const acct = acctById.get(cur.account_id);
     const self = acct?.external_id ?? "";
     const last = messages.at(-1);
-    const isChat = Boolean(acct && !["gmail", "outlook"].includes(acct.provider));
+    const isChat = Boolean(acct && !["gmail", "outlook", "imap"].includes(acct.provider));
     const presets: Record<"reply" | "reply_all" | "forward", Preset> = {
       reply: { ...replyRecipients("reply", messages, self), subject: replySubject("reply", cur.subject), body: "" },
       reply_all: { ...replyRecipients("reply_all", messages, self), subject: replySubject("reply_all", cur.subject), body: "" },
@@ -91,6 +91,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
       : acct.provider === "gmail" ? `https://mail.google.com/mail/?authuser=${encodeURIComponent(acct.external_id)}#all/${encodeURIComponent(cur.external_id)}`
       : acct.provider === "outlook" ? "https://outlook.office.com/mail/"
       : acct.provider === "whatsapp" ? `https://wa.me/${encodeURIComponent(cur.external_id)}`
+      : acct.provider === "whatsapp_web" ? `https://wa.me/${encodeURIComponent(cur.external_id.split("@")[0])}`
       : acct.provider === "telegram" ? "https://web.telegram.org/"
       : null;
     const reconnectHref = acct?.provider === "outlook" ? "/api/connect/outlook?write=1" : acct?.provider === "slack" ? "/api/connect/slack?write=1" : acct?.provider === "gmail" ? "/api/connect/gmail?write=1" : "/settings";

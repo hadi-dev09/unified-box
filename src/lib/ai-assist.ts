@@ -77,7 +77,7 @@ export async function runAssist(userId: string, input: { task: AiTask; provider:
   const { data } = await supabaseAdmin().from("user_ai_keys").select("key_enc, provider, model").eq("user_id", userId).maybeSingle();
   if (!data) return { ok: false as const, error: "Add your Claude or OpenAI API key in Settings → AI assistant first.", needsKey: true };
   const apiKey = decrypt(data.key_enc as string);
-  const kind = ["gmail", "outlook"].includes(input.provider) ? "email" : `${input.provider} chat`;
+  const kind = ["gmail", "outlook", "imap"].includes(input.provider) ? "email" : `${input.provider} chat`;
 
   // Most recent messages last; keep the prompt bounded (older messages are trimmed first).
   let budget = 60_000;

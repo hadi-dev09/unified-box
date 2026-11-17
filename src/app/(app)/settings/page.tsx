@@ -10,6 +10,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { slackConfigured } from "@/lib/slack";
 import { ConfirmSubmit } from "./confirm-submit";
 import { TelegramForm, WhatsAppForm } from "./connect-forms";
+import { ImapForm, WhatsAppQrForm } from "./direct-connect-forms";
 import { isConfigured, provider as providerInfo, PROVIDERS } from "@/lib/providers";
 import { accountName, channel, ChannelAvatar, Icon, ProviderIcon } from "../../ui";
 import { RenameAccount } from "./rename-account";
@@ -154,6 +155,9 @@ export default async function Settings({ searchParams }: { searchParams: Promise
                 </div>
               )}
               {ready && p.id === "whatsapp" && <WhatsAppForm />}
+              {p.id === "whatsapp_web" && <p className="mb-3 rounded-xl bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">Unofficial connection (like WhatsApp Web). WhatsApp may block numbers that send spam or bulk messages; normal replying is usually fine. Use at your own risk.</p>}
+              {ready && p.id === "whatsapp_web" && <WhatsAppQrForm />}
+              {ready && p.id === "imap" && <ImapForm />}
               {ready && p.id === "telegram" && <TelegramForm />}
             </section>
           );

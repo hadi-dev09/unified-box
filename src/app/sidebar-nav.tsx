@@ -13,7 +13,7 @@ type Props = {
   unreadTotal: number; pending: number; email: string;
 };
 
-const ORDER = ["gmail", "outlook", "slack", "whatsapp", "telegram"];
+const ORDER = ["gmail", "imap", "outlook", "slack", "whatsapp", "whatsapp_web", "telegram"];
 
 export function SidebarNav({ accounts, clients, perAcct, perClient, perProvider, unreadTotal, pending, email }: Props) {
   const path = usePathname();

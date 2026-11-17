@@ -69,7 +69,16 @@ async function deliverDraft(userId: string, d: Record<string, any>): Promise<Res
       }
       if (prov === "gmail" && d.mode === "forward") threadId = undefined; // a forward starts a new Gmail thread
       const mail = { from: acct.external_id, to: d.to_addrs, cc: d.cc_addrs ?? [], subject: d.subject, body: d.body, threadId, inReplyTo, references };
-      if (prov === "outlook") {
+      if (prov === "imap") {
+        const { imapSend } = await import("./imap");
+        const sent = await imapSend(d.account_id, mail);
+        // IMAP sync reads only the inbox, so record the sent reply in its conversation now.
+        const now = new Date().toISOString();
+        const ext = d.mode === "forward" || !threadId ? `t:${sent.id}` : threadId;
+        const { storeConversation } = await import("./sync");
+        const { loadRules } = await import("./clients");
+        await storeConversation(acct, ext, [{ id: `sent:${sent.id}`, threadId: ext, subject: d.subject, fromName: "You", fromAddr: acct.external_id, to: d.to_addrs, cc: d.cc_addrs ?? [], messageId: sent.id ?? "", body: d.body, sentAt: now, snippet: String(d.body).slice(0, 160), unread: false, outgoing: true, automated: false }], false, await loadRules(userId));
+      } else if (prov === "outlook") {
         const { outlookSend } = await import("./outlook");
         await outlookSend(d.account_id, { ...mail, replyToId: lastExternal, mode: d.mode });
       } else await sendMail(d.account_id, mail);
@@ -89,6 +98,9 @@ async function deliverDraft(userId: string, d: Record<string, any>): Promise<Res
       } else if (prov === "telegram") {
         const { telegramSend } = await import("./telegram");
         sentId = `${t.external_id}:${(await telegramSend(d.account_id, t.external_id, text)).id}`;
+      } else if (prov === "whatsapp_web") {
+        const { gwSendText } = await import("./wa-gateway");
+        sentId = (await gwSendText(acct.external_id, t.external_id, text)).id;
       } else if (prov === "slack") {
         const { slackSend } = await import("./slack");
         sentId = `${t.external_id}:${(await slackSend(d.account_id, t.external_id, text)).ts}`;

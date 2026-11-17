@@ -1,7 +1,7 @@
 // One place that describes every communication channel: drives the Accounts page, composer and sync.
 
 export type ProviderId =
-  | "gmail" | "outlook" | "slack" | "whatsapp" | "telegram"
+  | "gmail" | "outlook" | "slack" | "whatsapp" | "whatsapp_web" | "imap" | "telegram"
   | "teams" | "sms" | "instagram" | "messenger" | "upwork" | "discord" | "google_chat" | "linkedin";
 
 export type Provider = {
@@ -21,6 +21,10 @@ export const PROVIDERS: Provider[] = [
     blurb: "Personal Gmail and Google Workspace accounts." },
   { id: "outlook", name: "Outlook / Microsoft 365", kind: "email", stage: "live", canReply: true, env: ["MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET"],
     blurb: "Outlook.com, Hotmail and Microsoft 365 work accounts." },
+  { id: "whatsapp_web", name: "WhatsApp (scan QR)", kind: "chat", stage: "live", canReply: true, env: ["WA_GATEWAY_URL", "WA_GATEWAY_KEY", "WA_GATEWAY_WEBHOOK_SECRET"],
+    blurb: "Your normal WhatsApp or WhatsApp Business app, linked like WhatsApp Web by scanning a QR code. Unofficial: see the risk note." },
+  { id: "imap", name: "Email with app password", kind: "email", stage: "live", canReply: true, env: ["TOKEN_ENCRYPTION_KEY"],
+    blurb: "Gmail, Yahoo, iCloud, Zoho, Fastmail or your own domain using an app password. No Google app or verification needed." },
   { id: "whatsapp", name: "WhatsApp Business", kind: "chat", stage: "live", canReply: true, env: ["WHATSAPP_APP_SECRET", "WHATSAPP_VERIFY_TOKEN"],
     blurb: "Customer chats on a WhatsApp Business number (Cloud API). Replies within 24h of the customer's last message." },
   { id: "telegram", name: "Telegram", kind: "chat", stage: "live", canReply: true, env: ["TELEGRAM_API_ID", "TELEGRAM_API_HASH"],

@@ -21,7 +21,8 @@ export async function syncAccount(accountId: string): Promise<SyncResult> {
   const { data: acct } = await db.from("accounts").select("*").eq("id", accountId).single();
   if (!acct) return { accountId, synced: 0 };
   if (acct.provider === "slack") return syncSlack(accountId);
-  if (acct.provider === "whatsapp") {
+  if (acct.provider === "imap") return syncImap(acct);
+  if (acct.provider === "whatsapp" || acct.provider === "whatsapp_web") {
     // WhatsApp delivers messages to our webhook in real time; nothing to poll.
     await db.from("accounts").update({ last_synced_at: new Date().toISOString() }).eq("id", accountId);
     return { accountId, synced: 0, changed: false, note: "WhatsApp messages arrive instantly via webhook." };
@@ -127,6 +128,31 @@ export async function storeConversation(acct: Acct, ext: string, list: GmailMsg[
   );
   if (e2) throw new Error(e2.message);
   return t.id as string;
+}
+
+/** Email over IMAP (app password): read-only fetch of the 14-day INBOX window, grouped into conversations. */
+async function syncImap(acct: Acct): Promise<SyncResult> {
+  const db = supabaseAdmin();
+  try {
+    const { imapRecent } = await import("./imap");
+    const r = await imapRecent(acct.id, acct.external_id, async (ids) => {
+      if (!ids.length) return new Set<string>();
+      const { data } = await db.from("messages").select("external_id").eq("account_id", acct.id).in("external_id", ids);
+      return new Set((data ?? []).map((m: { external_id: string }) => m.external_id));
+    });
+    const rules = r.msgs.length ? await loadRules(acct.user_id) : [];
+    const byThread = new Map<string, GmailMsg[]>();
+    for (const m of r.msgs) byThread.set(m.threadId, [...(byThread.get(m.threadId) ?? []), m]);
+    const threadUnread = (ext: string) => [...r.allIds].some(([id, t]) => t === ext && r.unreadIds.has(id));
+    for (const [ext, list] of byThread) await storeConversation(acct, ext, list, list.some((m) => m.unread) || threadUnread(ext), rules);
+    await db.from("accounts").update({ status: "connected", status_detail: null, last_synced_at: new Date().toISOString() }).eq("id", acct.id);
+    return { accountId: acct.id, synced: r.msgs.length, unread: r.unreadIds.size, changed: r.msgs.length > 0 };
+  } catch (e) {
+    const msg = String((e as Error).message ?? e);
+    const auth = /AUTHENTICATIONFAILED|Invalid credentials|authentication/i.test(msg);
+    await db.from("accounts").update({ status: auth ? "needs_reauth" : "error", status_detail: msg.slice(0, 300) }).eq("id", acct.id);
+    return { accountId: acct.id, synced: 0, error: msg };
+  }
 }
 
 /** Outlook / Microsoft 365: fetch the 14-day window and store every conversation (Graph returns it in one call). */
