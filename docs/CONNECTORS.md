@@ -75,8 +75,8 @@ Limits:
 ## 4. Slack  (≈10 min)
 
 See `docs/slack-app-manifest.json` and the Slack section of `CHECKLIST.md`: create an app from the manifest, then copy
-**Client ID / Client Secret** → Vercel `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET`, then redeploy. Slack is read-only for now
-(replies use "Open in Slack"). In client workspaces, an admin may need to approve the app.
+**Client ID / Client Secret** → Vercel `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET`, then redeploy. Each user chooses **read + reply** (replies are posted as them, using Slack's `chat:write` user permission) or read-only when connecting.
+In client workspaces, an admin may need to approve the app.
 
 ---
 

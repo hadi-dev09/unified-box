@@ -72,7 +72,7 @@ export async function decideDraft(userId: string, draftId: string, action: "appr
       if (!d.thread_id) throw new Error("Pick a conversation to reply in.");
       const { data: t } = await db.from("threads").select("external_id, subject").eq("id", d.thread_id).eq("user_id", userId).single();
       if (!t) throw new Error("conversation not found");
-      const text = String(d.body).slice(0, 4096);
+      const text = String(d.body).slice(0, prov === "slack" ? 12_000 : 4096);
       let sentId: string;
       if (prov === "whatsapp") {
         const { waSend } = await import("./whatsapp");
@@ -80,6 +80,9 @@ export async function decideDraft(userId: string, draftId: string, action: "appr
       } else if (prov === "telegram") {
         const { telegramSend } = await import("./telegram");
         sentId = `${t.external_id}:${(await telegramSend(d.account_id, t.external_id, text)).id}`;
+      } else if (prov === "slack") {
+        const { slackSend } = await import("./slack");
+        sentId = `${t.external_id}:${(await slackSend(d.account_id, t.external_id, text)).ts}`;
       } else throw new Error("Unsupported account");
       // Show the sent message in the conversation right away.
       const now = new Date().toISOString();

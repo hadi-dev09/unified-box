@@ -49,7 +49,7 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
   }
 
   const appName = APP_NAME[provider] ?? provider;
-  if (provider === "whatsapp" || provider === "telegram") {
+  if (provider === "whatsapp" || provider === "telegram" || provider === "slack") {
     return (
       <form className="space-y-2" onSubmit={async (e) => {
         e.preventDefault();
@@ -65,10 +65,11 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
         <label htmlFor="c-chat" className="sr-only">Message</label>
         <div className="flex items-end gap-2">
           <textarea id="c-chat" rows={2} className={`${field} min-h-11 resize-y`} value={body} maxLength={4096} disabled={!canSend}
-            onChange={(e) => setBody(e.target.value)} placeholder={canSend ? `Message on ${appName}…` : "This chat is read-only"}
+            onChange={(e) => setBody(e.target.value)} placeholder={canSend ? `Message on ${appName}…` : `Connected read-only. Reconnect to reply here.`}
             onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) (e.currentTarget.form as HTMLFormElement).requestSubmit(); }} />
           <button disabled={busy || !canSend} className="rounded-lg bg-neutral-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-neutral-700 disabled:opacity-50 dark:bg-white dark:text-neutral-900">{busy ? "Sending…" : "Send"}</button>
         </div>
+        {!canSend && <p className="text-xs text-amber-800 dark:text-amber-300">Replies are off for this connection. <a className="font-semibold underline" href={reconnectHref}>Reconnect with replies</a>{openHref && <> or <a className="underline" href={openHref} target="_blank" rel="noopener noreferrer">open in {appName}</a></>}.</p>}
         {err && <p className="text-sm text-red-600">{err}</p>}
         {done && <p role="status" className="text-sm text-emerald-700 dark:text-emerald-300">{done}</p>}
         {provider === "whatsapp" && <p className="text-xs text-neutral-500">WhatsApp only allows free-form replies within 24 hours of the customer&apos;s last message.</p>}

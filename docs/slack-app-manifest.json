@@ -1,7 +1,7 @@
 {
   "display_information": {
     "name": "Unified Box",
-    "description": "Read-only unified inbox: shows the Slack conversations you can already see.",
+    "description": "Unified inbox: shows the Slack conversations you can already see and lets you reply as yourself.",
     "background_color": "#0a0a0a"
   },
   "oauth_config": {
@@ -11,6 +11,7 @@
     "scopes": {
       "user": [
         "channels:history",
+        "chat:write",
         "channels:read",
         "groups:history",
         "groups:read",

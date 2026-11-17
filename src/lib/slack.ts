@@ -3,18 +3,19 @@ import { decrypt } from "./crypto";
 import { isRealMessage, mentionedUsers, slackTextToPlain, slackTsToIso } from "./slack-text";
 import { supabaseAdmin } from "./supabase/admin";
 
-// Read-only user scopes: the app sees exactly what the signed-in user can see, and can write nothing.
+// User scopes: the app sees exactly what the signed-in user can see. Posting (chat:write) is only requested when the user opts in.
 export const SLACK_USER_SCOPES = [
   "channels:history", "channels:read", "groups:history", "groups:read",
   "im:history", "im:read", "mpim:history", "mpim:read", "users:read", "team:read",
 ];
 
+export const SLACK_SEND_SCOPE = "chat:write";
 export const slackConfigured = () => Boolean(process.env.SLACK_CLIENT_ID && process.env.SLACK_CLIENT_SECRET);
 
-export function slackAuthUrl(state: string) {
+export function slackAuthUrl(state: string, withSend = false) {
   const p = new URLSearchParams({
     client_id: env("SLACK_CLIENT_ID"),
-    user_scope: SLACK_USER_SCOPES.join(","),
+    user_scope: [...SLACK_USER_SCOPES, ...(withSend ? [SLACK_SEND_SCOPE] : [])].join(","),
     redirect_uri: `${env("APP_URL")}/api/connect/slack/callback`,
     state,
   });
@@ -53,6 +54,29 @@ async function call<T = Record<string, unknown>>(token: string, method: string, 
     throw new Error(`Slack ${method}: ${j.error}`);
   }
   return j;
+}
+
+/** Posts a message into a conversation as the signed-in user (only after they asked for it in the app). Returns the message ts. */
+export async function slackSend(accountId: string, channel: string, text: string): Promise<{ ts: string }> {
+  const { data: sec } = await supabaseAdmin().from("account_secrets").select("tokens_enc").eq("account_id", accountId).single();
+  if (!sec) throw new Error("No stored tokens");
+  const token = (JSON.parse(decrypt(sec.tokens_enc)) as { access_token: string }).access_token;
+  const r = await fetch("https://slack.com/api/chat.postMessage", {
+    method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json; charset=utf-8" },
+    body: JSON.stringify({ channel, text, unfurl_links: true }),
+  });
+  if (r.status === 429) throw new Error("Slack is rate limiting messages. Try again in a minute.");
+  const j = (await r.json()) as { ok: boolean; error?: string; ts?: string };
+  if (!j.ok || !j.ts) {
+    const e = j.error ?? `HTTP ${r.status}`;
+    if (REAUTH.has(e)) throw new SlackNeedsReauth(e);
+    if (e === "missing_scope" || e === "no_permission") throw new Error("This Slack connection can't post yet. Reconnect Slack with replies enabled.");
+    if (e === "not_in_channel" || e === "channel_not_found") throw new Error("You can't post in this Slack conversation.");
+    if (e === "is_archived") throw new Error("This Slack channel is archived.");
+    if (e === "restricted_action" || e === "action_prohibited") throw new Error("Your Slack workspace doesn't allow you to post here.");
+    throw new Error(`Slack couldn't send the message (${e}).`);
+  }
+  return { ts: j.ts };
 }
 
 export async function slackRevoke(token: string) {

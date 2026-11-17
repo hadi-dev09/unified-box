@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { encrypt } from "@/lib/crypto";
 import { env } from "@/lib/env";
-import { slackExchange } from "@/lib/slack";
+import { SLACK_SEND_SCOPE, slackExchange } from "@/lib/slack";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { supabaseServer } from "@/lib/supabase/server";
 import { syncAccount } from "@/lib/sync";
@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
     const { data: acct, error } = await db.from("accounts").upsert(
       {
         user_id: user.id, provider: "slack", account_type: "company", display_name: s.teamName,
-        external_id: `${s.teamId}:${s.userId}`, status: "connected", status_detail: null, can_send: false,
+        external_id: `${s.teamId}:${s.userId}`, status: "connected", status_detail: null, can_send: s.scope.split(",").includes(SLACK_SEND_SCOPE),
       },
       { onConflict: "user_id,provider,external_id" },
     ).select("id").single();

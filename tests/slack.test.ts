@@ -15,11 +15,11 @@ beforeEach(() => db.reset());
 const loc = (r: Response) => decodeURIComponent(r.headers.get("location") ?? "");
 const cb = (qs: string, cookie?: object) => callback.GET(new NextRequest(`https://app.test/api/connect/slack/callback?${qs}`, { headers: cookie ? { cookie: `slack_oauth=${encodeURIComponent(JSON.stringify(cookie))}` } : {} }));
 
-test("connect: requires login and asks only for read-only user scopes", async () => {
+test("connect: requires login and by default asks only for read-only user scopes", async () => {
   db.user = null;
-  assert.match(loc(await connect.GET()), /\/login$/);
+  assert.match(loc(await connect.GET(new NextRequest("https://app.test/api/connect/slack"))), /\/login$/);
   db.user = A;
-  const r = await connect.GET();
+  const r = await connect.GET(new NextRequest("https://app.test/api/connect/slack"));
   const u = new URL(r.headers.get("location")!);
   assert.equal(u.host, "slack.com");
   assert.equal(u.searchParams.get("redirect_uri"), "https://app.test/api/connect/slack/callback");
@@ -28,6 +28,47 @@ test("connect: requires login and asks only for read-only user scopes", async ()
   assert.ok(scopes.includes("im:history"));
   assert.ok(!scopes.some((s) => /write|chat:|admin/.test(s)), `read-only only: ${scopes}`);
   assert.match(r.headers.get("set-cookie")!, /HttpOnly/i);
+});
+
+test("connect: replies are opt-in (?write=1 adds chat:write only), and the grant decides can_send", async () => {
+  db.user = A;
+  const r = await connect.GET(new NextRequest("https://app.test/api/connect/slack?write=1"));
+  const scopes = new URL(r.headers.get("location")!).searchParams.get("user_scope")!.split(",");
+  assert.ok(scopes.includes("chat:write"));
+  assert.ok(!scopes.some((s) => /admin|files:write|channels:write|groups:write|im:write/.test(s)), `${scopes}`);
+  const cookie = r.headers.getSetCookie()[0].split(";")[0].split("=")[1];
+  const nonce = JSON.parse(decodeURIComponent(cookie)).nonce;
+  const net = stubFetch(slackApi({ "oauth.v2.access": () => ({ ok: true, team: { id: "T1", name: "Greenbridge" }, authed_user: { id: "U1", access_token: "xoxp-S", scope: "im:history,chat:write" } }) }));
+  try {
+    await cb(`code=c&state=${nonce}`, { nonce, uid: A.id, write: true });
+    assert.equal(db.rows("accounts")[0].can_send, true);
+  } finally { net.restore(); }
+});
+
+test("slack reply: posts as the user into the same conversation and appears right away; errors are friendly", async () => {
+  const { default: compose } = { default: await import("../src/app/api/compose/route") };
+  db.user = A;
+  db.rows("accounts").push({ id: "s2", user_id: A.id, provider: "slack", account_type: "company", display_name: "Greenbridge", external_id: "T1:U1", status: "connected", can_send: true });
+  db.rows("account_secrets").push({ account_id: "s2", tokens_enc: encrypt(JSON.stringify({ access_token: "xoxp-SECRET" })) });
+  db.rows("threads").push({ id: "th-s", user_id: A.id, account_id: "s2", external_id: "D1", subject: "DM · Dana Client", unread: true });
+  const post = (body: unknown) => compose.POST(new NextRequest("https://app.test/api/compose", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } }));
+  let net = stubFetch((c) => c.url.endsWith("/chat.postMessage") ? { ok: true, ts: "1700000999.0001" } : undefined);
+  try {
+    const r = await post({ thread_id: "th-s", body: "Reviewed, looks good.", send: true });
+    assert.equal(r.status, 200, JSON.stringify(await r.clone().json()));
+    const sent = JSON.parse(net.calls[0].body);
+    assert.equal(sent.channel, "D1"); assert.equal(sent.text, "Reviewed, looks good.");
+    assert.ok(db.rows("messages").some((m) => m.external_id === "D1:1700000999.0001" && m.is_outgoing));
+    assert.equal(db.rows("threads")[0].unread, false);
+  } finally { net.restore(); }
+  net = stubFetch(() => ({ ok: false, error: "not_in_channel" }));
+  try {
+    const r = await post({ thread_id: "th-s", body: "hi", send: true });
+    assert.equal(r.status, 502);
+    assert.match((await r.json()).error, /can't post in this Slack conversation/);
+  } finally { net.restore(); }
+  net = stubFetch(() => ({ ok: false, error: "token_revoked" }));
+  try { assert.equal((await post({ thread_id: "th-s", body: "hi", send: true })).status, 502); } finally { net.restore(); }
 });
 
 test("callback: state/user checks and admin-blocked explanation", async () => {

@@ -119,7 +119,14 @@ export default async function Settings({ searchParams }: { searchParams: Promise
                   </details>
                 </div>
               )}
-              {ready && p.id === "slack" && <a className={`${btn} inline-block`} href="/api/connect/slack">Connect a Slack workspace</a>}
+              {ready && p.id === "slack" && (
+                <div className="grid gap-2 text-sm">
+                  <a className={btn} href="/api/connect/slack?write=1">Connect a workspace · read + reply</a>
+                  <details><summary className="cursor-pointer text-xs text-neutral-500">More options</summary>
+                    <div className="mt-2 grid gap-2"><a className={btn} href="/api/connect/slack">Connect a workspace · read-only</a></div>
+                  </details>
+                </div>
+              )}
               {ready && p.id === "whatsapp" && <WhatsAppForm />}
               {ready && p.id === "telegram" && <TelegramForm />}
             </section>
@@ -146,7 +153,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
                 <div className="text-xs text-neutral-500">{providerInfo(a.provider)?.name ?? a.provider} · {a.account_type} · {a.status === "connected" ? "connected" : a.status.replace(/_/g, " ")} · {a.can_send ? "can reply" : "read-only"}</div>
               </div>
               <div className="flex items-center gap-3 text-sm">
-                {a.status !== "connected" && ["gmail", "outlook", "slack"].includes(a.provider) && <a className="text-blue-600" href={a.provider === "slack" ? "/api/connect/slack" : `/api/connect/${a.provider}?type=${a.account_type}${a.can_send ? "&write=1" : ""}`}>Reconnect</a>}
+                {a.status !== "connected" && ["gmail", "outlook", "slack"].includes(a.provider) && <a className="text-blue-600" href={a.provider === "slack" ? `/api/connect/slack${a.can_send ? "?write=1" : ""}` : `/api/connect/${a.provider}?type=${a.account_type}${a.can_send ? "&write=1" : ""}`}>Reconnect</a>}
                 <form action={disconnect}>
                   <input type="hidden" name="account_id" value={a.id} />
                   <ConfirmSubmit message={`Disconnect ${a.display_name}? Its synced messages will be deleted from Unified Box. Nothing is deleted in the original app.`} className="text-red-600">Disconnect</ConfirmSubmit>

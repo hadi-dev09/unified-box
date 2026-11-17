@@ -262,9 +262,9 @@ test("outlook: admin-consent refusal shows a helpful message", async () => {
 
 test("compose: Slack stays read-only; chat replies need text; email needs recipients", async () => {
   db.user = A;
-  const slack = seed("slack", { external_id: "T1:U1" });
+  const slack = seed("slack", { external_id: "T1:U1", can_send: false });
   db.rows("threads").push({ id: "t-slack", user_id: A.id, account_id: slack, external_id: "C1", subject: "#general" });
-  assert.match((await (await compose.POST(json("https://app.test/api/compose", { thread_id: "t-slack", body: "hi", send: true }))).json()).error, /isn't available for Slack/);
+  assert.match((await (await compose.POST(json("https://app.test/api/compose", { thread_id: "t-slack", body: "hi", send: true }))).json()).error, /read-only/);
   const wa = seed("whatsapp");
   db.rows("threads").push({ id: "t-wa", user_id: A.id, account_id: wa, external_id: "923", subject: "Sara" });
   assert.match((await (await compose.POST(json("https://app.test/api/compose", { thread_id: "t-wa", body: "   ", send: true }))).json()).error, /Write a message/);

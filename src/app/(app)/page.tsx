@@ -144,7 +144,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
                 canSend={Boolean(acct?.can_send)}
                 showReplyAll={isGroup(messages, self)}
                 presets={presets}
-                reconnectHref={acct?.provider === "outlook" ? `/api/connect/outlook?type=${acct?.account_type ?? "personal"}&write=1` : `/api/connect/gmail?type=${acct?.account_type ?? "personal"}&write=1`}
+                reconnectHref={acct?.provider === "outlook" ? `/api/connect/outlook?type=${acct?.account_type ?? "personal"}&write=1` : acct?.provider === "slack" ? "/api/connect/slack?write=1" : acct?.provider === "whatsapp" || acct?.provider === "telegram" ? "/settings" : `/api/connect/gmail?type=${acct?.account_type ?? "personal"}&write=1`}
                 openHref={openHref}
               />
             </div>
