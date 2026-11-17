@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { parseAddressField } from "@/lib/reply";
+import { AiHelper } from "./ai-helper";
 import { Icon } from "./ui";
 
 type Mode = "reply" | "reply_all" | "forward";
@@ -12,8 +13,8 @@ const LABEL: Record<Mode, string> = { reply: "Reply", reply_all: "Reply all", fo
 const field = "field";
 const btn = "btn";
 
-export function Composer({ threadId, provider, canSend, showReplyAll, presets, reconnectHref, openHref }: {
-  threadId: string; provider: string; canSend: boolean; showReplyAll: boolean;
+export function Composer({ threadId, provider, canSend, showReplyAll, presets, reconnectHref, openHref, hasAiKey = false }: {
+  threadId: string; provider: string; canSend: boolean; showReplyAll: boolean; hasAiKey?: boolean;
   presets: Record<Mode, Preset>; reconnectHref: string; openHref: string | null;
 }) {
   const router = useRouter();
@@ -61,6 +62,7 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
           setBody(""); setDone("Sent"); router.refresh();
         } finally { setBusy(false); }
       }}>
+        {canSend && <AiHelper threadId={threadId} hasKey={hasAiKey} text={body} setText={setBody} />}
         <label htmlFor="c-chat" className="sr-only">Message</label>
         <div className="flex items-end gap-2">
           <textarea id="c-chat" rows={2} className={`${field} min-h-11 resize-y`} value={body} maxLength={4096} disabled={!canSend}
@@ -123,6 +125,7 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
               <label className="w-12 shrink-0 text-xs text-neutral-500" htmlFor="c-sub">Subject</label>
               <input id="c-sub" className={field} value={subject} onChange={(e) => setSubject(e.target.value)} />
             </div>
+            <AiHelper threadId={threadId} hasKey={hasAiKey} text={body} setText={setBody} />
             <textarea ref={bodyRef} className={`${field} min-h-40 resize-y leading-relaxed`} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Write your message…" />
             {mode === "forward" && <p className="text-xs text-neutral-500">Attachments aren&apos;t forwarded yet; only the text is included.</p>}
           </div>

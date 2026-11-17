@@ -16,6 +16,8 @@ import { SearchBox } from "../search-box";
 import { MenuButton, SyncStatus } from "../shell";
 import { ThreadList, type ListThread } from "../thread-list";
 import { accountName, Avatar, channel, ChannelTag, Icon, shortName } from "../ui";
+import { AiSummary } from "../ai-helper";
+import { aiKeyInfo } from "@/lib/ai-assist";
 
 type ThreadRow = {
   id: string; subject: string | null; snippet: string | null; last_message_at: string; unread: boolean; needs_reply: boolean; last_from: string | null;
@@ -60,6 +62,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
     thread ? sb.from("drafts").select("id, subject, body, to_addrs, cc_addrs, created_by").eq("thread_id", thread).eq("status", "pending").order("created_at") : Promise.resolve({ data: null }),
   ]);
   const threads = (threadRows ?? []) as unknown as ThreadRow[];
+  const hasAiKey = thread ? Boolean(await aiKeyInfo(user.id)) : false;
   const messages = (msgRows ?? []) as (Msg & { id: string })[];
 
   const qs = (o: Partial<Search>) => {
@@ -122,6 +125,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 md:px-6">
           <div className="mx-auto max-w-3xl space-y-3">
+            {messages.length > 1 && <AiSummary threadId={cur.id} hasKey={hasAiKey} />}
             {messages.map((m, i) => {
               const name = m.is_outgoing ? "You" : m.from_name || m.from_addr || "Unknown";
               const head = (
@@ -163,7 +167,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
             ))}
             <div className="pt-2">
               <Composer threadId={cur.id} provider={acct?.provider ?? "gmail"} canSend={Boolean(acct?.can_send)} showReplyAll={isGroup(messages, self)}
-                presets={presets} reconnectHref={reconnectHref} openHref={openHref} />
+                presets={presets} reconnectHref={reconnectHref} openHref={openHref} hasAiKey={hasAiKey} />
             </div>
           </div>
         </div>

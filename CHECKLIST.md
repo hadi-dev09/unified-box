@@ -24,6 +24,9 @@ Two production deploys **failed** because the `CRON_SECRET` value in Vercel cont
   4. **Manage Distribution** → activate **public distribution** (needed to install into client workspaces; no Marketplace listing required).
   5. Vercel → project → Settings → Environment Variables: add `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET` (Sensitive), then **Redeploy**.
 - [ ] **(you) New connectors: Outlook, WhatsApp Business, Telegram**: step-by-step in `docs/CONNECTORS.md`. Each needs a few keys in Vercel and a redeploy; until then its card says "Coming soon". Migration `0006` (new providers) is already applied.
+- [ ] **(you) Slack instant messages**: add `SLACK_SIGNING_SECRET` in Vercel (Slack app → Basic Information → Signing Secret), redeploy, then paste the updated `docs/slack-app-manifest.json` into the Slack app's App Manifest and reconnect Slack once.
+- [ ] **(you) Gmail "manage" access**: Settings → click **Upgrade access** on each Gmail, so read/unread, star and delete also change in Gmail itself.
+- [ ] **(you, optional) AI assistant**: Settings → AI assistant → paste a Claude API key from console.anthropic.com.
 - [ ] **(you) Add every Gmail you want to test** as a Test user in Google Cloud → OAuth consent screen → Audience.
 - [ ] **(you, recommended) Fix sign-in email limits**: Supabase's built-in email sender allows only a few emails per hour. Supabase → Authentication → SMTP Settings → add a provider (Resend, Postmark, etc.).
 

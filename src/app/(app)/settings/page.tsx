@@ -13,6 +13,8 @@ import { TelegramForm, WhatsAppForm } from "./connect-forms";
 import { isConfigured, provider as providerInfo, PROVIDERS } from "@/lib/providers";
 import { accountName, channel, ChannelAvatar, Icon, ProviderIcon } from "../../ui";
 import { RenameAccount } from "./rename-account";
+import { AiKeyForm } from "./ai-key-form";
+import { aiKeyInfo } from "@/lib/ai-assist";
 import { gmailHasScope, MODIFY_SCOPE } from "@/lib/gmail";
 
 async function userId() {
@@ -81,6 +83,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
   const manage = Object.fromEntries(await Promise.all(accounts.filter((a) => a.provider === "gmail").map(async (a) => [a.id, await gmailHasScope(a.id, MODIFY_SCOPE)] as const)));
   const clients = (clientRows ?? []) as { id: string; name: string }[];
   const rules = (ruleRows ?? []) as { id: string; client_id: string; kind: string; pattern: string }[];
+  const aiKey = await aiKeyInfo(user.id);
   const live = PROVIDERS.filter((p) => p.stage === "live");
   const connectHref = (id: string, write: boolean) => id === "slack" ? `/api/connect/slack${write ? "?write=1" : ""}` : `/api/connect/${id}${write ? "?write=1" : ""}`;
   const section = "mb-3 mt-10 flex items-end justify-between gap-3";
@@ -208,6 +211,12 @@ export default async function Settings({ searchParams }: { searchParams: Promise
           );
         })}
       </div>
+
+      <div id="ai" className={`${section} scroll-mt-20`}><div><h2 className="text-lg font-semibold tracking-tight">AI assistant</h2><p className="text-sm muted">Draft, improve and summarize replies right inside Unified Box with your own Claude API key. Usage is billed to your Anthropic account, and nothing is ever sent without you pressing Send.</p></div></div>
+      <section className="card p-4">
+        <AiKeyForm hint={aiKey?.hint ?? null} />
+        {!aiKey && <p className="mt-3 text-xs muted">Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" className="font-medium text-[var(--accent-text)] hover:underline">console.anthropic.com → API keys</a> (needs a little prepaid credit). It&apos;s checked, then stored encrypted; Unified Box never shows it again.</p>}
+      </section>
 
       <div className={section}><div><h2 className="text-lg font-semibold tracking-tight">AI apps</h2><p className="text-sm muted">Connect Claude, ChatGPT and others, and see or revoke their access, on <Link href="/connect-ai" className="font-medium text-[var(--accent-text)] hover:underline">Connect your AI</Link>.</p></div></div>
     </main>

@@ -92,6 +92,12 @@ export function installDemoNetwork() {
     const ok = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "content-type": "application/json" } });
     if (url.includes("gmail.googleapis.com") && url.endsWith("/messages/send")) return ok({ id: `demo-${Date.now()}` });
     if (url.includes("graph.facebook.com") && url.endsWith("/messages")) return ok({ messages: [{ id: `wamid.demo${Date.now()}` }] });
+    if (url.startsWith("https://api.anthropic.com/v1/models")) return ok({ data: [{ id: "claude-opus-5-5", type: "model" }], has_more: false, first_id: "a", last_id: "a" });
+    if (url.startsWith("https://api.anthropic.com/v1/messages")) {
+      const ask = String(JSON.parse(String(init?.body ?? "{}")).messages?.[0]?.content ?? "");
+      const text = /Summarize/.test(ask) ? "• Sarah needs mockups signed off by Friday\n• Board review is Monday\nNeeds from you: confirm the delivery date." : /Rewrite my draft/.test(ask) ? "Hi Sarah, the mockups will be ready for your review by Thursday noon. Thanks!" : "Hi Sarah,\n\nThanks for checking in. The mockups will be with you by Thursday, so you'll have time to sign off before Friday.\n\nBest,\nRafay";
+      return ok({ id: "msg_demo", type: "message", role: "assistant", model: "claude-opus-5-5", content: [{ type: "text", text }], stop_reason: "end_turn", stop_details: null, usage: { input_tokens: 1, output_tokens: 1 } });
+    }
     if (url.includes("slack.com/api/chat.postMessage")) return ok({ ok: true, ts: `${Math.floor(Date.now() / 1000)}.000100` });
     if (url.includes("slack.com")) return ok({ ok: true, channels: [], messages: [], members: [], response_metadata: {} });
     if (url.includes("googleapis.com") || url.includes("graph.microsoft.com")) return ok({});
