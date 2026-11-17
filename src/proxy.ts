@@ -20,12 +20,12 @@ export async function proxy(request: NextRequest) {
       },
     },
   });
-  // Do not remove: this call performs the refresh.
-  await supabase.auth.getUser();
+  // Do not remove: this call refreshes an expired session. getClaims verifies the JWT locally (no Auth round trip when valid).
+  await supabase.auth.getClaims();
   return response;
 }
 
 export const config = {
   // Skip static assets and the token-authenticated API surface (MCP, OAuth, discovery, cron).
-  matcher: ["/((?!_next/static|_next/image|favicon|icon|apple-touch-icon|manifest|api/mcp|api/oauth|api/webhooks|\\.well-known|.*\\.(?:png|svg|ico|webmanifest)$).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon|icon|apple-touch-icon|manifest|api/mcp|api/oauth|api/webhooks|api/cron|\\.well-known|.*\\.(?:png|svg|ico|webmanifest)$).*)"],
 };

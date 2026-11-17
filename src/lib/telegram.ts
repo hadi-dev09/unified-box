@@ -31,8 +31,8 @@ const g = globalThis as unknown as { __TG_FACTORY__?: Factory };
 export const setTelegramFactory = (f: Factory | undefined) => { g.__TG_FACTORY__ = f; };
 
 async function realClient(session: string): Promise<TgClient> {
-  const { TelegramClient, Api } = await import("telegram");
-  const { StringSession } = await import("telegram/sessions");
+  const { TelegramClient, Api, sessions, password: pwd } = await import("telegram");
+  const { StringSession } = sessions;
   const apiId = Number(process.env.TELEGRAM_API_ID), apiHash = String(process.env.TELEGRAM_API_HASH);
   const c = new TelegramClient(new StringSession(session), apiId, apiHash, { connectionRetries: 2 });
   c.setLogLevel("error" as never);
@@ -50,7 +50,7 @@ async function realClient(session: string): Promise<TgClient> {
       catch (e) { if (/SESSION_PASSWORD_NEEDED/.test(String((e as Error).message))) return "password"; throw e; }
     },
     checkPassword: async (password) => {
-      const { computeCheck } = await import("telegram/Password");
+      const { computeCheck } = pwd;
       const pw = await c.invoke(new Api.account.GetPassword());
       await c.invoke(new Api.auth.CheckPassword({ password: await computeCheck(pw, password) }));
     },

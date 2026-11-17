@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { env } from "./env";
 import { decrypt } from "./crypto";
 import { isRealMessage, mentionedUsers, slackTextToPlain, slackTsToIso } from "./slack-text";
@@ -163,7 +164,7 @@ export async function syncSlack(accountId: string) {
 
       const { data: t, error } = await db.from("threads").upsert({
         user_id: acct.user_id, account_id: accountId, external_id: c.id, subject: title, snippet: lastText.slice(0, 200),
-        last_message_at: slackTsToIso(last.ts!), unread: false,
+        last_message_at: slackTsToIso(last.ts!),
         needs_reply: Boolean((c.is_im || c.is_mpim) && !lastMine),
         last_from: lastMine ? "You" : (last.user ? names[last.user] : last.username) ?? "Slack",
       }, { onConflict: "account_id,external_id" }).select("id").single();
@@ -191,3 +192,63 @@ export async function syncSlack(accountId: string) {
   }
 }
 
+
+// ---------- real-time Events API ----------
+
+/** Verifies Slack's request signature (v0 HMAC-SHA256 over "v0:timestamp:body"), rejecting replays older than 5 minutes. */
+export function validSlackSignature(raw: string, ts: string | null, sig: string | null, secret: string, nowS = Math.floor(Date.now() / 1000)) {
+  if (!ts || !sig || !secret || !/^\d+$/.test(ts) || Math.abs(nowS - Number(ts)) > 300) return false;
+  const want = Buffer.from(`v0=${createHmac("sha256", secret).update(`v0:${ts}:${raw}`).digest("hex")}`);
+  const got = Buffer.from(sig);
+  return want.length === got.length && timingSafeEqual(want, got);
+}
+
+type SlackEvent = { type: string; subtype?: string; channel?: string; channel_type?: string; user?: string; bot_id?: string; username?: string; text?: string; ts?: string; message?: { user?: string; text?: string; ts?: string } };
+
+/** Stores one pushed Slack message into the right conversation, immediately (no polling, no rate limit). */
+export async function ingestSlackEvent(acct: { id: string; user_id: string; external_id: string }, ev: SlackEvent) {
+  if (ev.type !== "message" || !ev.channel || !ev.ts) return false;
+  if (ev.subtype && ev.subtype !== "file_share" && ev.subtype !== "thread_broadcast" && ev.subtype !== "bot_message") return false; // edits, deletes, joins
+  const db = supabaseAdmin();
+  const [, selfId] = acct.external_id.split(":");
+  const { data: sec } = await db.from("account_secrets").select("tokens_enc").eq("account_id", acct.id).single();
+  if (!sec) return false;
+  const token = (JSON.parse(decrypt(sec.tokens_enc)) as { access_token: string }).access_token;
+  const names: Record<string, string> = {};
+  const nameOf = async (id: string) => {
+    if (names[id]) return names[id];
+    try {
+      const u = await call<{ user: { real_name?: string; name?: string; profile?: { display_name?: string } } }>(token, "users.info", { user: id });
+      names[id] = u.user.profile?.display_name || u.user.real_name || u.user.name || id;
+    } catch { names[id] = id; }
+    return names[id];
+  };
+  for (const id of new Set([ev.user, ...mentionedUsers(ev.text ?? "")].filter(Boolean) as string[])) await nameOf(id);
+
+  const { data: prev } = await db.from("threads").select("id, subject").eq("account_id", acct.id).eq("external_id", ev.channel).maybeSingle();
+  let title = prev?.subject as string | undefined;
+  if (!title) {
+    try {
+      const c = (await call<{ channel: Conv }>(token, "conversations.info", { channel: ev.channel })).channel;
+      if (c.is_im && c.user) await nameOf(c.user);
+      title = c.is_im ? `DM · ${names[c.user ?? ""] ?? "unknown"}` : c.is_mpim ? `Group DM · ${(c.name ?? "").replace(/^mpdm-|-\d+$/g, "").split("--").join(", ")}` : `${c.is_private ? "🔒" : "#"}${c.name ?? c.id}`;
+    } catch { title = ev.channel_type === "im" ? "Direct message" : ev.channel; }
+  }
+  const mine = ev.user === selfId;
+  const text = slackTextToPlain(ev.text ?? "", names) || (ev.subtype === "file_share" ? "📎 File" : "");
+  const at = slackTsToIso(ev.ts);
+  const direct = ev.channel_type === "im" || ev.channel_type === "mpim";
+  const mentioned = (ev.text ?? "").includes(`<@${selfId}>`);
+  const { data: t, error } = await db.from("threads").upsert({
+    user_id: acct.user_id, account_id: acct.id, external_id: ev.channel, subject: title, snippet: text.slice(0, 200), last_message_at: at,
+    unread: !mine, needs_reply: !mine && (direct || mentioned), last_from: mine ? "You" : (ev.user ? names[ev.user] : ev.username) ?? "Slack",
+  }, { onConflict: "account_id,external_id" }).select("id").single();
+  if (error || !t) throw new Error(error?.message ?? "thread upsert failed");
+  await db.from("messages").upsert({
+    user_id: acct.user_id, account_id: acct.id, thread_id: t.id, external_id: `${ev.channel}:${ev.ts}`,
+    from_addr: ev.user ?? ev.bot_id ?? "", from_name: ev.user ? names[ev.user] : ev.username ?? "Bot", to_addrs: [], subject: title,
+    body_text: text.slice(0, 20_000), sent_at: at, is_outgoing: mine,
+  }, { onConflict: "account_id,external_id" });
+  await db.from("accounts").update({ last_synced_at: new Date().toISOString(), status: "connected", status_detail: null }).eq("id", acct.id);
+  return true;
+}

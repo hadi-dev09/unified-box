@@ -1,8 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { cleanupExpired } from "@/lib/accounts";
+import { currentUser } from "@/lib/auth";
+import { dueAfterMs } from "@/lib/cron";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { supabaseServer } from "@/lib/supabase/server";
 import { syncAccount } from "@/lib/sync";
 
 export const maxDuration = 60;
@@ -15,29 +16,46 @@ function isCron(req: NextRequest) {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
-const MIN_GAP_MS = 45_000;
+type Acct = { id: string; provider: string; last_synced_at: string | null; status: string };
+const isDue = (a: Acct) => a.provider !== "whatsapp" && ["connected", "error"].includes(a.status) && (!a.last_synced_at || Date.now() - new Date(a.last_synced_at).getTime() > dueAfterMs(a.provider));
 
-/** Syncs accounts; for signed-in users, skips inboxes synced in the last 45s (the app polls every minute). */
-async function run(userId: string | null) {
-  let q = supabaseAdmin().from("accounts").select("id, last_synced_at").in("status", ["connected", "error"]);
-  if (userId) q = q.eq("user_id", userId);
-  const { data } = await q;
-  const due = (data ?? []).filter((a: { last_synced_at: string | null }) => !userId || !a.last_synced_at || Date.now() - new Date(a.last_synced_at).getTime() > MIN_GAP_MS);
-  const results = await Promise.all(due.map((a: { id: string }) => syncAccount(a.id)));
-  return NextResponse.json({ results, skipped: (data ?? []).length - due.length, changed: results.some((r) => r.changed || r.error) });
+/** A tiny fingerprint of the inbox: the app reloads the screen only when it changes. */
+async function fingerprint(userId: string, accts: Acct[]) {
+  const db = supabaseAdmin();
+  const [{ data: newest }, { count: unread }, { count: drafts }] = await Promise.all([
+    db.from("threads").select("last_message_at").eq("user_id", userId).order("last_message_at", { ascending: false }).limit(1),
+    db.from("threads").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("unread", true),
+    db.from("drafts").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("status", "pending"),
+  ]);
+  const lastSynced = accts.map((a) => a.last_synced_at).filter(Boolean).sort().pop() ?? null;
+  return { version: `${newest?.[0]?.last_message_at ?? ""}|${unread ?? 0}|${drafts ?? 0}|${accts.map((a) => a.status).join(",")}`, lastSynced };
 }
 
-// POST: a signed-in user syncs their own accounts; Bearer CRON_SECRET syncs everyone's.
+/**
+ * Signed-in app: returns the inbox fingerprint at once and starts syncing any inbox that is due in the background
+ * (the server also syncs every minute on its own, so this only fills gaps).
+ */
 export async function POST(req: NextRequest) {
-  if (isCron(req)) return run(null);
-  const { data: { user } } = await (await supabaseServer()).auth.getUser();
+  if (isCron(req)) {
+    const { data } = await supabaseAdmin().from("accounts").select("id, provider, last_synced_at, status");
+    const results = await Promise.all(((data ?? []) as Acct[]).filter(isDue).map((a) => syncAccount(a.id)));
+    return NextResponse.json({ results });
+  }
+  const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  return run(user.id);
+  const { data } = await supabaseAdmin().from("accounts").select("id, provider, last_synced_at, status").eq("user_id", user.id);
+  const accts = (data ?? []) as Acct[];
+  const due = accts.filter(isDue);
+  const wait = new URL(req.url).searchParams.get("wait") === "1";
+  if (due.length && wait) await Promise.all(due.map((a) => syncAccount(a.id).catch(() => null)));
+  else if (due.length) after(async () => { await Promise.all(due.map((a) => syncAccount(a.id).catch(() => null))); });
+  const after2 = wait && due.length ? ((await supabaseAdmin().from("accounts").select("id, provider, last_synced_at, status").eq("user_id", user.id)).data ?? []) as Acct[] : accts;
+  return NextResponse.json({ ...(await fingerprint(user.id, after2)), syncing: due.length > 0 && !wait });
 }
 
-// GET: Vercel Cron (sends Authorization: Bearer $CRON_SECRET). Never callable with just a browser session.
+// GET: legacy Vercel Cron (Authorization: Bearer $CRON_SECRET). Never callable with just a browser session.
 export async function GET(req: NextRequest) {
   if (!isCron(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   await cleanupExpired();
-  return run(null);
+  return POST(req);
 }

@@ -20,11 +20,15 @@ export default async function Verify({ searchParams }: { searchParams: Promise<{
   }
   return (
     <>
-      <div className="mb-5 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-neutral-100 text-2xl dark:bg-neutral-800">✉️</div>
+      <div className="mb-5 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--accent-soft)] text-2xl">✉️</div>
       <h1 className="text-2xl font-semibold tracking-tight">{COPY[type].title}</h1>
-      <p className="mb-6 mt-1 text-sm text-neutral-500">{COPY[type].body} <b className="text-neutral-800 dark:text-neutral-200">{email}</b>. Tap the link in it <b className="text-neutral-800 dark:text-neutral-200">on this device, in this browser</b>. If the email shows a code instead, enter it below.</p>
+      <p className="mb-2 mt-1 text-sm muted">{COPY[type].body} <b className="text-[var(--text)]">{email}</b>.</p>
+      <ol className="mb-6 list-decimal space-y-1 pl-5 text-sm muted">
+        <li><b className="text-[var(--text)]">Click the button in the email</b> (on this device and browser), or</li>
+        <li>if the email shows a <b className="text-[var(--text)]">6-digit code</b>, type it below.</li>
+      </ol>
       <VerifyForm email={email} type={type} next={safeNext(sp.next)} />
-      <p className="mt-6 text-center text-sm text-neutral-500"><Link href="/login" className="underline-offset-4 hover:underline">Use a different email</Link></p>
+      <p className="mt-6 text-center text-sm muted"><Link href="/login" className="underline-offset-4 hover:underline">Use a different email</Link></p>
     </>
   );
 }

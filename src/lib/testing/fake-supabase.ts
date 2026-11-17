@@ -80,6 +80,8 @@ class Query implements PromiseLike<Result> {
   in(c: string, v: any[]) { this.filters.push((r) => v.includes(r[c])); return this; } // eslint-disable-line @typescript-eslint/no-explicit-any
   gt(c: string, v: any) { this.filters.push((r) => r[c] != null && cmp(r[c], v) > 0); return this; } // eslint-disable-line @typescript-eslint/no-explicit-any
   gte(c: string, v: any) { this.filters.push((r) => r[c] != null && cmp(r[c], v) >= 0); return this; } // eslint-disable-line @typescript-eslint/no-explicit-any
+  lte(c: string, v: any) { this.filters.push((r) => r[c] != null && cmp(r[c], v) <= 0); return this; } // eslint-disable-line @typescript-eslint/no-explicit-any
+  not(c: string, op: string, v: any) { if (op === "is") this.filters.push((r) => (r[c] ?? null) !== v); else this.filters.push((r) => r[c] !== v); return this; } // eslint-disable-line @typescript-eslint/no-explicit-any
   lt(c: string, v: any) { this.filters.push((r) => r[c] != null && cmp(r[c], v) < 0); return this; } // eslint-disable-line @typescript-eslint/no-explicit-any
   ilike(c: string, p: string) { const re = likeToRegex(p); this.filters.push((r) => re.test(String(r[c] ?? ""))); return this; }
   or(expr: string) {
@@ -174,6 +176,7 @@ export class FakeDb {
   private find(email: string) { return this.authUsers.find((u) => u.email === email.toLowerCase()); }
   auth = {
     getUser: async () => ({ data: { user: this.user }, error: null }),
+    getClaims: async () => ({ data: this.user ? { claims: { sub: this.user.id, email: this.user.email } } : null, error: null }),
     exchangeCodeForSession: async (code: string) => { this.log("exchangeCodeForSession", code); return code === "bad" ? authErr("invalid flow state") : { data: {}, error: null }; },
     signInWithPassword: async (a: { email: string; password: string }) => {
       this.log("signInWithPassword", a);
@@ -195,6 +198,12 @@ export class FakeDb {
     },
     verifyOtp: async (a: { email?: string; token?: string; token_hash?: string; type: string }) => {
       this.log("verifyOtp", a);
+      if (a.token_hash?.startsWith("hash:")) {
+        const hu = this.find(a.token_hash.slice(5));
+        if (!hu) return authErr("Token has expired or is invalid");
+        this.user = { id: hu.id, email: hu.email };
+        return { data: { session: {}, user: this.user }, error: null };
+      }
       if (a.token !== "123456" && a.token_hash !== "good-hash") return authErr("Token has expired or is invalid");
       const u = a.email ? this.find(a.email) : this.authUsers[0];
       if (u) { u.confirmed = true; this.user = { id: u.id, email: u.email }; }
@@ -208,6 +217,20 @@ export class FakeDb {
       const u = this.find(this.user.email);
       if (u && a.password) u.password = a.password;
       return { data: { user: this.user }, error: null };
+    },
+    admin: {
+      createUser: async (a: { email: string }) => {
+        this.log("admin.createUser", a);
+        if (this.find(a.email)) return authErr("A user with this email address has already been registered");
+        const u = { id: randomUUID(), email: a.email.toLowerCase(), password: "", confirmed: true };
+        this.authUsers.push(u);
+        return { data: { user: { id: u.id, email: u.email } }, error: null };
+      },
+      generateLink: async (a: { type: string; email: string }) => {
+        this.log("admin.generateLink", a);
+        const u = this.find(a.email);
+        return u ? { data: { properties: { hashed_token: `hash:${u.email}` } }, error: null } : authErr("User not found");
+      },
     },
     signOut: async () => { this.log("signOut", null); this.user = null; return { error: null }; },
     signInWithOAuth: async (a: { provider: string; options: { redirectTo: string } }) => {

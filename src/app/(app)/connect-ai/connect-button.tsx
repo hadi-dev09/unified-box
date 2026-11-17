@@ -13,7 +13,7 @@ export function ConnectButton({ href, copyText, label, primary = false }: { href
         if (!copyText) return;
         try { await navigator.clipboard.writeText(copyText); setCopied(true); setTimeout(() => setCopied(false), 4000); } catch { /* clipboard blocked: user can use Copy */ }
       }}
-      className={`inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${primary ? "bg-neutral-900 text-white hover:bg-neutral-700 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200" : "border border-neutral-300 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-800"}`}
+      className={`${primary ? "btn-primary" : "btn"} w-full !py-2.5`}
     >
       {copied ? "URL copied, paste it there ✓" : label}
     </a>

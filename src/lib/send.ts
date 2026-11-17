@@ -67,6 +67,9 @@ export async function decideDraft(userId: string, draftId: string, action: "appr
         const { outlookSend } = await import("./outlook");
         await outlookSend(d.account_id, { ...mail, replyToId: lastExternal, mode: d.mode });
       } else await sendMail(d.account_id, mail);
+      // Pull the sent message into the conversation right away.
+      const { syncAccount } = await import("./sync");
+      await syncAccount(d.account_id).catch(() => null);
     } else {
       // Chat apps: the message goes back into the same chat; no recipients or subject.
       if (!d.thread_id) throw new Error("Pick a conversation to reply in.");

@@ -9,8 +9,8 @@ export type Preset = { to: string[]; cc: string[]; subject: string; body: string
 
 const APP_NAME: Record<string, string> = { gmail: "Gmail", outlook: "Outlook", slack: "Slack", whatsapp: "WhatsApp", telegram: "Telegram" };
 const LABEL: Record<Mode, string> = { reply: "Reply", reply_all: "Reply all", forward: "Forward" };
-const field = "w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-neutral-400 focus:ring-2 focus:ring-neutral-200 dark:border-neutral-700 dark:bg-neutral-900 dark:focus:border-neutral-500 dark:focus:ring-neutral-800";
-const btn = "inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800";
+const field = "field";
+const btn = "btn";
 
 export function Composer({ threadId, provider, canSend, showReplyAll, presets, reconnectHref, openHref }: {
   threadId: string; provider: string; canSend: boolean; showReplyAll: boolean;
@@ -43,7 +43,6 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
       const j = await res.json().catch(() => ({}));
       if (!res.ok) return setErr(j.error ?? `Failed (${res.status})`);
       setDone(`Sent to ${t.valid.slice(0, 2).join(", ")}${t.valid.length > 2 ? "…" : ""}`); setMode(null);
-      await fetch("/api/sync", { method: "POST" }).catch(() => {}); // pull the sent message into the conversation
       router.refresh();
     } finally { setBusy(false); }
   }
@@ -67,7 +66,7 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
           <textarea id="c-chat" rows={2} className={`${field} min-h-11 resize-y`} value={body} maxLength={4096} disabled={!canSend}
             onChange={(e) => setBody(e.target.value)} placeholder={canSend ? `Message on ${appName}…` : `Connected read-only. Reconnect to reply here.`}
             onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) (e.currentTarget.form as HTMLFormElement).requestSubmit(); }} />
-          <button disabled={busy || !canSend} className="rounded-lg bg-neutral-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-neutral-700 disabled:opacity-50 dark:bg-white dark:text-neutral-900">{busy ? "Sending…" : "Send"}</button>
+          <button disabled={busy || !canSend} className="btn-primary !py-2.5">{busy ? "Sending…" : "Send"}</button>
         </div>
         {!canSend && <p className="text-xs text-amber-800 dark:text-amber-300">Replies are off for this connection. <a className="font-semibold underline" href={reconnectHref}>Reconnect with replies</a>{openHref && <> or <a className="underline" href={openHref} target="_blank" rel="noopener noreferrer">open in {appName}</a></>}.</p>}
         {err && <p className="text-sm text-red-600">{err}</p>}
@@ -98,7 +97,7 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
       )}
 
       {mode && (
-        <div className="rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+        <div className="card p-3">
           <div className="mb-2 flex items-center justify-between">
             <span className="inline-flex items-center gap-1.5 text-sm font-semibold"><Icon name={mode === "reply" ? "reply" : mode === "reply_all" ? "replyAll" : "forward"} /> {LABEL[mode]}</span>
             <button className="rounded-md p-1 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800" aria-label="Discard" onClick={() => setMode(null)}><Icon name="close" /></button>
@@ -130,7 +129,7 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
           {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {canSend && (
-              <button disabled={busy} onClick={() => submit()} className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-700 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200">
+              <button disabled={busy} onClick={() => submit()} className="btn-primary">
                 {busy ? "Sending…" : "Send"}
               </button>
             )}

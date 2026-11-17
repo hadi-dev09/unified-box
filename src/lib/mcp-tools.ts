@@ -1,5 +1,7 @@
 import { z } from "zod";
+import { addRule, createClientRecord, setThreadClient } from "./clients";
 import { canReply, isEmailProvider, type ProviderId } from "./providers";
+import { applyThreadAction } from "./thread-actions";
 import { replyRecipients } from "./reply";
 import { syncAccount } from "./sync";
 import { supabaseAdmin } from "./supabase/admin";
@@ -40,14 +42,14 @@ export const tools: Tool[] = [
     }),
 
   def("list_accounts", "List connected inboxes with their type and health status.", z.object({}), async (uid) => {
-    const { data } = await supabaseAdmin().from("accounts").select("id, provider, account_type, display_name, status, status_detail, can_send, last_synced_at").eq("user_id", uid);
+    const { data } = await supabaseAdmin().from("accounts").select("id, provider, display_name, label, status, status_detail, can_send, last_synced_at").eq("user_id", uid);
     return data;
   }),
 
   def("list_threads", "List recent conversation threads across all inboxes, newest first.",
     z.object({ account_id: z.string().uuid().optional(), client: z.string().min(1).max(80).optional(), unread_only: z.boolean().optional(), needs_reply: z.boolean().optional(), limit }),
     async (uid, a) => {
-      let q = supabaseAdmin().from("threads").select("id, account_id, subject, snippet, last_message_at, unread, needs_reply, accounts(display_name, account_type), clients(name)").eq("user_id", uid).order("last_message_at", { ascending: false }).limit(a.limit);
+      let q = supabaseAdmin().from("threads").select("id, account_id, subject, snippet, last_message_at, unread, needs_reply, starred, accounts(display_name, label, provider), clients(name)").eq("user_id", uid).is("trashed_at", null).order("last_message_at", { ascending: false }).limit(a.limit);
       if (a.account_id) q = q.eq("account_id", a.account_id);
       if (a.client) {
         const { data: c } = await supabaseAdmin().from("clients").select("id").eq("user_id", uid).ilike("name", a.client.replace(/[%_\\]/g, " ").trim()).maybeSingle();
@@ -104,7 +106,7 @@ export const tools: Tool[] = [
         const { data: d, error } = await db.from("drafts").insert({ user_id: uid, account_id: t.account_id, thread_id: t.id, mode: "reply", to_addrs: [], cc_addrs: [], subject: t.subject || "Chat", body: a.body.slice(0, 4096), created_by: "claude" }).select("id").single();
         if (error) return { error: error.message };
         await db.from("audit_log").insert({ user_id: uid, actor: "claude", action: "draft.created", target: d.id, meta: { provider: acct.provider } });
-        return { draft_id: d.id, status: "pending", message: "Draft saved. It has NOT been sent. The user can review, edit and send it in Unified Box." };
+        return { draft_id: d.id, status: "pending", open_in_app: `${process.env.APP_URL ?? ""}/?thread=${t.id}&draft=${d.id}`, message: "Draft saved. It has NOT been sent. Give the user the open_in_app link to review, edit and send it." };
       }
       const { data: msgs } = await db.from("messages").select("from_addr, to_addrs, cc_addrs, is_outgoing, sent_at").eq("thread_id", t.id).eq("user_id", uid);
       const mode = a.reply_all ? "reply_all" : "reply";
@@ -114,6 +116,63 @@ export const tools: Tool[] = [
       const { data: d, error } = await db.from("drafts").insert({ user_id: uid, account_id: t.account_id, thread_id: t.id, mode, to_addrs: to, cc_addrs: cc, subject, body: a.body, created_by: "claude" }).select("id").single();
       if (error) return { error: error.message };
       await db.from("audit_log").insert({ user_id: uid, actor: "claude", action: "draft.created", target: d.id, meta: { to, cc } });
-      return { draft_id: d.id, status: "pending", to, cc, message: "Draft saved. It has NOT been sent. The user can review, edit and send it in Unified Box (inside the conversation, or under AI drafts)." };
+      return { draft_id: d.id, status: "pending", to, cc, open_in_app: `${process.env.APP_URL ?? ""}/?thread=${t.id}&draft=${d.id}`, message: "Draft saved. It has NOT been sent. Give the user the open_in_app link: it opens the conversation with the draft ready to edit and send." };
+    }),
+
+  // ---------- organising (never sends, never deletes) ----------
+  def("list_clients", "List the user's client groups and the rules that auto-tag conversations into them.", z.object({}), async (uid) => {
+    const db = supabaseAdmin();
+    const [{ data: c }, { data: r }] = await Promise.all([
+      db.from("clients").select("id, name").eq("user_id", uid).order("name"),
+      db.from("client_rules").select("client_id, kind, pattern").eq("user_id", uid),
+    ]);
+    return (c ?? []).map((x: { id: string; name: string }) => ({ ...x, rules: (r ?? []).filter((y: { client_id: string }) => y.client_id === x.id).map((y: { kind: string; pattern: string }) => `${y.kind}: ${y.pattern}`) }));
+  }),
+
+  def("create_client_group", "Create a client group (e.g. a company name). Optionally add domains/emails whose conversations should be tagged into it automatically.",
+    z.object({ name: z.string().min(1).max(80), domains: z.array(z.string().min(3).max(120)).max(10).optional(), emails: z.array(z.string().email().max(200)).max(10).optional() }),
+    async (uid, a) => {
+      const db = supabaseAdmin();
+      const r = await createClientRecord(uid, a.name);
+      if (!r.ok && !/already exists/.test(r.error ?? "")) return { error: r.error };
+      const { data: c } = await db.from("clients").select("id, name").eq("user_id", uid).eq("name", a.name.trim().slice(0, 80)).maybeSingle();
+      if (!c) return { error: "Could not create client" };
+      const added: string[] = [], problems: string[] = [];
+      for (const d of a.domains ?? []) { const x = await addRule(uid, c.id, "domain", d); if (x.ok) added.push(`domain: ${d}`); else problems.push(`${d}: ${x.error}`); }
+      for (const e of a.emails ?? []) { const x = await addRule(uid, c.id, "email", e); if (x.ok) added.push(`email: ${e}`); else problems.push(`${e}: ${x.error}`); }
+      await db.from("audit_log").insert({ user_id: uid, actor: "claude", action: "client.created", target: c.name });
+      return { client: c, rules_added: added, ...(problems.length ? { problems } : {}) };
+    }),
+
+  def("add_client_rule", "Auto-tag conversations from a domain or email address into an existing client group.",
+    z.object({ client_id: z.string().uuid(), kind: z.enum(["domain", "email"]), pattern: z.string().min(3).max(200) }), async (uid, a) => {
+      const r = await addRule(uid, a.client_id, a.kind, a.pattern);
+      return r.ok ? { ok: true } : { error: r.error };
+    }),
+
+  def("assign_to_client", "Put a conversation into a client group (or remove it with client_id null).",
+    z.object({ thread_id: z.string().uuid(), client_id: z.string().uuid().nullable() }), async (uid, a) => setThreadClient(uid, a.thread_id, a.client_id)),
+
+  def("update_conversations", "Mark conversations read or unread, star/unstar them, or snooze them until a time (ISO 8601). Never deletes. Mirrored to Gmail when the user allowed it.",
+    z.object({ thread_ids: z.array(z.string().uuid()).min(1).max(100), action: z.enum(["read", "unread", "star", "unstar", "snooze", "unsnooze"]), snooze_until: z.string().datetime({ offset: true }).optional() }),
+    async (uid, a) => {
+      if (a.action === "snooze" && !a.snooze_until) return { error: "snooze_until is required for snooze" };
+      const r = await applyThreadAction(uid, a.thread_ids, a.action, { until: a.snooze_until, actor: "claude" });
+      return r.ok ? { updated: r.count, ...(r.note ? { note: r.note } : {}) } : { error: r.error };
+    }),
+
+  def("rename_inbox", "Give a connected inbox/channel a friendly name (e.g. the client it belongs to). Empty name resets it.",
+    z.object({ account_id: z.string().uuid(), name: z.string().max(60) }), async (uid, a) => {
+      const clean = a.name.replace(/\s+/g, " ").trim();
+      const { data, error } = await supabaseAdmin().from("accounts").update({ label: clean || null }).eq("id", a.account_id).eq("user_id", uid).select("id, label, display_name").maybeSingle();
+      if (error || !data) return { error: "inbox not found" };
+      return { ok: true, account: data };
+    }),
+
+  def("connect_channel_link", "Get the link the user opens to connect another inbox (Gmail, Outlook, Slack, WhatsApp Business, Telegram). Connecting always needs the user to sign in themselves.",
+    z.object({ channel: z.enum(["gmail", "outlook", "slack", "whatsapp", "telegram"]) }), async (_uid, a) => {
+      const base = process.env.APP_URL ?? "";
+      const direct: Record<string, string> = { gmail: "/api/connect/gmail?write=1", outlook: "/api/connect/outlook?write=1", slack: "/api/connect/slack?write=1" };
+      return { url: `${base}${direct[a.channel] ?? "/settings"}`, note: "Ask the user to open this link and sign in. You can't connect accounts on their behalf." };
     }),
 ];

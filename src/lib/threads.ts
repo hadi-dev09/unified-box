@@ -1,6 +1,6 @@
-import { supabaseAdmin } from "./supabase/admin";
+import { applyThreadAction } from "./thread-actions";
 
-/** Marks a thread read inside Unified Box (works even with read-only Gmail access). */
+/** Marks a conversation read (in Gmail too when the account allows it). */
 export async function markSeen(userId: string, threadId: string) {
-  await supabaseAdmin().from("threads").update({ unread: false, seen_at: new Date().toISOString() }).eq("id", threadId).eq("user_id", userId);
+  await applyThreadAction(userId, [threadId], "read");
 }

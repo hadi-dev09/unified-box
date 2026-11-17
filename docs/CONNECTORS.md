@@ -74,9 +74,18 @@ Limits:
 
 ## 4. Slack  (≈10 min)
 
-See `docs/slack-app-manifest.json` and the Slack section of `CHECKLIST.md`: create an app from the manifest, then copy
-**Client ID / Client Secret** → Vercel `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET`, then redeploy. Each user chooses **read + reply** (replies are posted as them, using Slack's `chat:write` user permission) or read-only when connecting.
-In client workspaces, an admin may need to approve the app.
+1. <https://api.slack.com/apps> → your app (or Create New App → From a manifest) → **App Manifest** → paste `docs/slack-app-manifest.json` → Save.
+   It includes `chat:write` (replies posted as the user) and **Event Subscriptions**, so Slack pushes new messages to
+   `https://unified-box-eight.vercel.app/api/webhooks/slack` the moment they're posted.
+2. **Basic Information**: copy **Client ID**, **Client Secret** and **Signing Secret** into Vercel as
+   `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_SIGNING_SECRET` (Production), then **Redeploy**.
+   Add the signing secret and redeploy *before* saving the manifest with events, because Slack checks the URL when you save.
+3. **Manage Distribution** → Activate Public Distribution (needed for client workspaces).
+4. Reconnect Slack once in Unified Box (Settings → Slack → Connect) so the new permissions apply.
+
+Why events matter: since 2025, Slack only lets apps that aren't in the Slack Marketplace read history **once per minute,
+15 messages at a time**. Without events, Slack would lag badly. With events, new messages arrive instantly and polling is
+only a slow safety net.
 
 ---
 

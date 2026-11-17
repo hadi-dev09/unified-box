@@ -2,19 +2,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-const POLL_MS = 60_000;
+const POLL_MS = 20_000;
 
 function ago(iso: string | null, now: number) {
   if (!iso) return "not synced yet";
   const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));
-  if (s < 45) return "just now";
+  if (s < 60) return "just now";
   const m = Math.round(s / 60);
   return m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`;
 }
 
 /**
- * Keeps the inbox fresh without a Sync button: checks for new mail when the app opens, every minute while the tab
- * is visible, and when you come back to the tab. Refreshes the screen only when something changed.
+ * Keeps the inbox fresh: the server syncs every minute (and Slack/WhatsApp push instantly); this asks for a tiny
+ * fingerprint every 20s while the tab is visible and reloads the screen only when something changed.
  */
 export function LiveSync({ enabled, lastSyncedAt }: { enabled: boolean; lastSyncedAt: string | null; unreadTotal?: number }) {
   const router = useRouter();
@@ -22,21 +22,22 @@ export function LiveSync({ enabled, lastSyncedAt }: { enabled: boolean; lastSync
   const [state, setState] = useState<"idle" | "syncing" | "error">("idle");
   const [now, setNow] = useState(() => Date.now());
   const busy = useRef(false);
-  const lastRefresh = useRef(Date.now());
+  const version = useRef<string | null>(null);
 
-  useEffect(() => setAt(lastSyncedAt), [lastSyncedAt]);
+  useEffect(() => setAt((prev) => (lastSyncedAt && (!prev || lastSyncedAt > prev) ? lastSyncedAt : prev)), [lastSyncedAt]);
 
   const check = useCallback(async () => {
     if (!enabled || busy.current || document.visibilityState !== "visible") return;
-    busy.current = true; setState("syncing");
+    busy.current = true;
     try {
-      const r = await fetch("/api/sync", { method: "POST" });
+      const r = await fetch("/api/sync", { method: "POST", cache: "no-store" });
       if (!r.ok) throw new Error(String(r.status));
-      const j = (await r.json()) as { changed?: boolean; results?: unknown[] };
-      if (j.results?.length) setAt(new Date().toISOString());
-      // Refresh when mail changed, or every 5 minutes anyway (assistants and other devices can change things too).
-      if (j.changed || Date.now() - lastRefresh.current > 5 * 60_000) { lastRefresh.current = Date.now(); router.refresh(); }
-      setState("idle");
+      const j = (await r.json()) as { version: string; lastSynced: string | null; syncing?: boolean };
+      setState(j.syncing ? "syncing" : "idle");
+      if (j.lastSynced) setAt(j.lastSynced);
+      if (version.current !== null && j.version !== version.current) router.refresh();
+      version.current = j.version;
+      if (j.syncing) setTimeout(() => { busy.current = false; check(); }, 6000);
     } catch { setState("error"); }
     finally { busy.current = false; }
   }, [enabled, router]);
@@ -45,7 +46,7 @@ export function LiveSync({ enabled, lastSyncedAt }: { enabled: boolean; lastSync
     if (!enabled) return;
     check();
     const poll = setInterval(check, POLL_MS);
-    const tick = setInterval(() => setNow(Date.now()), 20_000);
+    const tick = setInterval(() => setNow(Date.now()), 15_000);
     const onVisible = () => { if (document.visibilityState === "visible") { setNow(Date.now()); check(); } };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
@@ -54,9 +55,9 @@ export function LiveSync({ enabled, lastSyncedAt }: { enabled: boolean; lastSync
 
   if (!enabled) return null;
   return (
-    <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-neutral-500" role="status" aria-live="polite" title="Unified Box checks for new mail automatically every minute">
-      <span className={`h-1.5 w-1.5 rounded-full ${state === "syncing" ? "animate-pulse bg-blue-500" : state === "error" ? "bg-amber-500" : "bg-emerald-500"}`} />
-      <span className="hidden sm:inline">{state === "syncing" ? "Checking for mail…" : state === "error" ? "Offline, retrying" : `Updated ${ago(at, now)}`}</span>
+    <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-[var(--muted)]" role="status" aria-live="polite" title="New messages arrive automatically">
+      <span className={`h-1.5 w-1.5 rounded-full ${state === "syncing" ? "animate-pulse bg-[var(--accent)]" : state === "error" ? "bg-amber-500" : "bg-emerald-500"}`} />
+      <span className="hidden sm:inline">{state === "syncing" ? "Syncing…" : state === "error" ? "Offline, retrying" : `Updated ${ago(at, now)}`}</span>
     </span>
   );
 }

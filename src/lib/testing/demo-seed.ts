@@ -8,7 +8,7 @@ export function seedDemo(db: FakeDb) {
   db.user = process.env.DEMO_SIGNED_OUT === "1" ? null : DEMO_USER;
   const u = DEMO_USER.id;
   const accts = [
-    { id: "a1", display_name: "rafay.work@gmail.com", account_type: "personal", status: "connected" },
+    { id: "a1", display_name: "rafay.work@gmail.com", label: "Work", account_type: "personal", status: "connected" },
     { id: "a2", display_name: "rafay@acme-agency.com", account_type: "company", status: "needs_reauth", status_detail: "Token has been expired or revoked." },
     { id: "a3", display_name: "billing@greenbridge.io", account_type: "company", status: "connected" },
   ];
@@ -52,7 +52,9 @@ export function seedDemo(db: FakeDb) {
   db.rows("clients").push({ id: "c1", user_id: u, name: "Greenbridge" }, { id: "c2", user_id: u, name: "Acme Agency" });
   db.rows("client_rules").push({ id: "r1", user_id: u, client_id: "c1", kind: "domain", pattern: "greenbridge.io" }, { id: "r2", user_id: u, client_id: "c2", kind: "email", pattern: "daniel.okafor@acme-agency.com" });
   for (const [t, c] of [["t2", "c1"], ["t7", "c1"], ["t5", "c2"]]) db.rows("threads").find((x) => x.id === t)!.client_id = c;
-  db.rows("accounts").push({ id: "a4", user_id: u, provider: "slack", account_type: "company", display_name: "Greenbridge Workspace", external_id: "T1:U1", status: "connected", can_send: false, last_synced_at: ago(8) });
+  db.rows("accounts").push({ id: "a4", user_id: u, provider: "slack", account_type: "company", display_name: "Greenbridge Workspace", external_id: "T1:U1", status: "connected", can_send: true, last_synced_at: ago(8) });
+  db.rows("threads").push({ id: "t11", user_id: u, account_id: "a4", external_id: "C123", subject: "#client-greenbridge", snippet: "Deploy looks good, ship it?", last_message_at: ago(20), unread: true, needs_reply: true, last_from: "Dana", client_id: "c1", starred: true });
+  db.rows("messages").push({ id: "m-t11-1", user_id: u, account_id: "a4", thread_id: "t11", external_id: "C123:1", from_addr: "U2", from_name: "Dana", to_addrs: [], subject: "#client-greenbridge", body_text: "Deploy looks good, ship it? @Rafay", sent_at: ago(20), is_outgoing: false });
   // Chat apps: one WhatsApp Business number and one Telegram account, each with a conversation.
   db.rows("accounts").push(
     { id: "a5", user_id: u, provider: "whatsapp", account_type: "company", display_name: "Acme Studio · +92 300 0000000", external_id: "111222333", status: "connected", can_send: true, last_synced_at: ago(1) },
@@ -90,6 +92,7 @@ export function installDemoNetwork() {
     const ok = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "content-type": "application/json" } });
     if (url.includes("gmail.googleapis.com") && url.endsWith("/messages/send")) return ok({ id: `demo-${Date.now()}` });
     if (url.includes("graph.facebook.com") && url.endsWith("/messages")) return ok({ messages: [{ id: `wamid.demo${Date.now()}` }] });
+    if (url.includes("slack.com/api/chat.postMessage")) return ok({ ok: true, ts: `${Math.floor(Date.now() / 1000)}.000100` });
     if (url.includes("slack.com")) return ok({ ok: true, channels: [], messages: [], members: [], response_metadata: {} });
     if (url.includes("googleapis.com") || url.includes("graph.microsoft.com")) return ok({});
     return real(input, init);

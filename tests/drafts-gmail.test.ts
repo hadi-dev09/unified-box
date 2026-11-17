@@ -26,6 +26,7 @@ function seedDraft(accountId: string, user = A, over: Record<string, unknown> = 
 const act = (id: string, action: string) =>
   draftsRoute.POST(new NextRequest(`https://app.test/api/drafts/${id}`, { method: "POST", body: JSON.stringify({ action }), headers: { "content-type": "application/json" } }), { params: Promise.resolve({ id }) });
 const gmailSend = (c: { url: string }) => c.url.endsWith("/messages/send") ? { id: "sent-1" } : undefined;
+const sends = (n: { calls: { url: string }[] }) => n.calls.filter((c) => c.url.endsWith("/messages/send")).length;
 
 // ---------- draft approval ----------
 test("approval: requires a signed-in human session", async () => {
@@ -58,12 +59,12 @@ test("approval: approve sends exactly once via Gmail, logs it, and cannot be rep
     const r = await act(d, "approve");
     assert.equal(r.status, 200);
     assert.equal((await r.json()).status, "sent");
-    assert.equal(net.calls.length, 1);
+    assert.equal(sends(net), 1);
     assert.equal(db.rows("drafts")[0].status, "sent");
     assert.deepEqual(db.rows("audit_log").map((a) => a.action).sort(), ["draft.approve", "draft.sent"]);
     // double click / replay
     assert.equal((await act(d, "approve")).status, 404);
-    assert.equal(net.calls.length, 1, "must not send twice");
+    assert.equal(sends(net), 1, "must not send twice");
   } finally { net.restore(); }
 });
 
@@ -106,7 +107,7 @@ test("approval: header injection via subject is neutralised; via recipient is re
 
     const d2 = seedDraft(seedAccount(), A, { to_addrs: ["ok@acme.com\r\nBcc: attacker2@evil.com"] });
     assert.equal((await act(d2, "approve")).status, 502);
-    assert.equal(net.calls.length, 1, "the malicious recipient must never reach Gmail");
+    assert.equal(sends(net), 1, "the malicious recipient must never reach Gmail");
   } finally { net.restore(); }
 });
 
@@ -321,10 +322,10 @@ test("sync: other Gmail failures set status=error with detail", async () => {
   } finally { net.restore(); }
 });
 
-test("/api/sync: auth rules (session, cron secret, neither)", async () => {
+test("/api/sync: auth rules (session, cron secret, neither) and the inbox fingerprint", async () => {
   seedAccount(A); seedAccount(B);
   const net = stubFetch((c) => c.url.includes("/messages?") ? { messages: [] } : undefined);
-  const call = (headers: Record<string, string> = {}) => syncRoute.POST(new NextRequest("https://app.test/api/sync", { method: "POST", headers }));
+  const call = (headers: Record<string, string> = {}, qs = "") => syncRoute.POST(new NextRequest(`https://app.test/api/sync${qs}`, { method: "POST", headers }));
   try {
     db.user = null;
     assert.equal((await call()).status, 401);
@@ -336,12 +337,15 @@ test("/api/sync: auth rules (session, cron secret, neither)", async () => {
     assert.equal((await r.json()).results.length, 2, "cron syncs all users");
 
     db.user = A;
-    const throttled = await (await call()).json();
-    assert.equal(throttled.results.length, 0, "just synced by cron -> skipped (45s throttle)");
-    assert.equal(throttled.skipped, 1, "only the user's own account is considered");
+    const calls = net.calls.length;
+    const fresh = await (await call({}, "?wait=1")).json();
+    assert.equal(net.calls.length, calls, "just synced by cron -> nothing due");
+    assert.equal(typeof fresh.version, "string");
+    assert.ok(fresh.lastSynced, "reports when the inbox was last updated");
     db.rows("accounts").forEach((a) => (a.last_synced_at = null));
-    const mine = await (await call()).json();
-    assert.equal(mine.results.length, 1, "a user only syncs their own accounts");
+    await call({}, "?wait=1");
+    assert.ok(net.calls.length > calls, "due accounts sync");
+    assert.ok(db.rows("accounts").find((a) => a.user_id === B.id)!.last_synced_at === null, "a user only syncs their own accounts");
   } finally { net.restore(); }
 });
 

@@ -18,7 +18,6 @@ export function DraftActions({ id, subject, body }: { id: string; subject: strin
         body: JSON.stringify(action === "approve" && editing ? { action, subject: sub, body: text } : { action }),
       });
       if (!res.ok) { const j = await res.json().catch(() => ({})); setErr(j.error ?? `Failed (${res.status})`); return; }
-      if (action === "approve") await fetch("/api/sync", { method: "POST" }).catch(() => {}); // show the sent reply in the thread
     } finally { setBusy(false); router.refresh(); }
   }
 
@@ -32,14 +31,14 @@ export function DraftActions({ id, subject, body }: { id: string; subject: strin
       )}
       {editing && (
         <div className="space-y-2">
-          <input value={sub} onChange={(e) => setSub(e.target.value)} className="w-full rounded-lg border border-neutral-300 bg-transparent px-3 py-2 text-sm dark:border-neutral-700" aria-label="Subject" />
-          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={8} className="w-full rounded-lg border border-neutral-300 bg-transparent px-3 py-2 text-sm dark:border-neutral-700" aria-label="Message" />
+          <input value={sub} onChange={(e) => setSub(e.target.value)} className="field" aria-label="Subject" />
+          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={8} className="field leading-relaxed" aria-label="Message" />
         </div>
       )}
       <div className="flex flex-wrap gap-2">
-        <button disabled={busy} onClick={() => act("approve")} className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{editing ? "Send edited version" : "Approve & send"}</button>
-        <button disabled={busy} onClick={() => setEditing((v) => !v)} className="rounded-lg border border-neutral-300 px-4 py-2 text-sm disabled:opacity-50 dark:border-neutral-700">{editing ? "Cancel edit" : "Edit"}</button>
-        <button disabled={busy} onClick={() => act("reject")} className="rounded-lg border border-neutral-300 px-4 py-2 text-sm text-red-600 disabled:opacity-50 dark:border-neutral-700">Reject</button>
+        <button disabled={busy} onClick={() => act("approve")} className="btn-primary">{editing ? "Send edited version" : "Send"}</button>
+        <button disabled={busy} onClick={() => setEditing((v) => !v)} className="btn">{editing ? "Cancel edit" : "Edit"}</button>
+        <button disabled={busy} onClick={() => act("reject")} className="btn !text-red-600">Discard</button>
       </div>
       {err && <p className="text-sm text-red-600">{err}</p>}
     </div>

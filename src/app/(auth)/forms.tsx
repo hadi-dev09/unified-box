@@ -6,12 +6,12 @@ import {
   forgotPassword, resendCode, sendLoginCode, signInWithPassword, signUp, updatePassword, verifyCode, type FormState,
 } from "./actions";
 
-const input = "w-full rounded-xl border border-neutral-300 bg-white px-3.5 py-2.5 text-[15px] outline-none transition placeholder:text-neutral-400 focus:border-neutral-900 focus:ring-4 focus:ring-neutral-900/5 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-300 dark:focus:ring-white/10";
+const input = "field !rounded-xl !px-3.5 !py-2.5 !text-[15px]";
 
 export function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1.5 flex items-center justify-between text-sm font-medium text-neutral-800 dark:text-neutral-200">{label}{hint}</span>
+      <span className="mb-1.5 flex items-center justify-between text-sm font-medium">{label}{hint}</span>
       {children}
     </label>
   );
@@ -20,7 +20,7 @@ export function Field({ label, children, hint }: { label: string; children: Reac
 function Submit({ children }: { children: React.ReactNode }) {
   const { pending } = useFormStatus();
   return (
-    <button disabled={pending} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-neutral-900 px-4 py-2.5 text-[15px] font-semibold text-white transition hover:bg-neutral-700 disabled:opacity-60 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200">
+    <button disabled={pending} className="btn-primary w-full !rounded-xl !py-2.5 !text-[15px]">
       {pending && <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />}
       {children}
     </button>
@@ -54,11 +54,11 @@ export function LoginForm({ next, initialEmail = "" }: { next: string; initialEm
   const [pwState, pwAction] = useActionState(signInWithPassword, undefined);
   const [codeState, codeAction] = useActionState(sendLoginCode, undefined);
   const tab = (m: typeof mode, label: string) => (
-    <button type="button" onClick={() => setMode(m)} className={`flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition ${mode === m ? "bg-white shadow-sm dark:bg-neutral-800" : "text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200"}`}>{label}</button>
+    <button type="button" onClick={() => setMode(m)} className={`flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition ${mode === m ? "bg-[var(--surface)] shadow-sm" : "muted hover:text-[var(--text)]"}`}>{label}</button>
   );
   return (
     <div className="space-y-4">
-      <div className="flex gap-1 rounded-xl bg-neutral-100 p-1 dark:bg-neutral-950">{tab("password", "Password")}{tab("code", "Email link")}</div>
+      <div className="flex gap-1 rounded-xl bg-[var(--surface-2)] p-1">{tab("password", "Password")}{tab("code", "Email link")}</div>
       {mode === "password" ? (
         <form action={pwAction} className="space-y-4">
           <input type="hidden" name="next" value={next} />
@@ -90,7 +90,7 @@ export function SignupForm({ next }: { next: string }) {
     <form action={action} className="space-y-4">
       <input type="hidden" name="next" value={next} />
       <Field label="Full name"><input name="name" autoComplete="name" maxLength={80} placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} className={input} /></Field>
-      <Field label="Work email"><EmailInput value={email} onChange={setEmail} /></Field>
+      <Field label="Email"><EmailInput value={email} onChange={setEmail} /></Field>
       <Field label="Password"><PasswordInput name="password" autoComplete="new-password" placeholder="8+ characters, letters and numbers" /></Field>
       <Field label="Confirm password"><PasswordInput name="confirm" autoComplete="new-password" /></Field>
       <label className="flex items-start gap-2 text-sm text-neutral-600 dark:text-neutral-400">
@@ -112,7 +112,7 @@ export function VerifyForm({ email, type, next }: { email: string; type: string;
         <input type="hidden" name="email" value={email} />
         <input type="hidden" name="type" value={type} />
         <input type="hidden" name="next" value={next} />
-        <Field label="Code (if your email has one)">
+        <Field label="6-digit code (only if your email shows one)">
           <input name="code" required inputMode="numeric" autoComplete="one-time-code" pattern="[0-9 ]{6,12}" maxLength={12} placeholder="123456" autoFocus
             className={`${input} text-center font-mono text-2xl tracking-[0.5em]`} />
         </Field>

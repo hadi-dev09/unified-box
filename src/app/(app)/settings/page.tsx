@@ -1,3 +1,4 @@
+import { currentUser } from "@/lib/auth";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { PageFrame } from "../../shell";
@@ -10,10 +11,12 @@ import { slackConfigured } from "@/lib/slack";
 import { ConfirmSubmit } from "./confirm-submit";
 import { TelegramForm, WhatsAppForm } from "./connect-forms";
 import { isConfigured, provider as providerInfo, PROVIDERS } from "@/lib/providers";
-import { ProviderIcon } from "../../ui";
+import { accountName, channel, ChannelAvatar, Icon, ProviderIcon } from "../../ui";
+import { RenameAccount } from "./rename-account";
+import { gmailHasScope, MODIFY_SCOPE } from "@/lib/gmail";
 
 async function userId() {
-  const { data: { user } } = await (await supabaseServer()).auth.getUser();
+  const user = await currentUser();
   return user?.id ?? null;
 }
 const str = (f: FormData, k: string) => String(f.get(k) ?? "");
@@ -46,7 +49,7 @@ async function removeRule(form: FormData) {
 
 async function disconnect(form: FormData) {
   "use server";
-  const { data: { user } } = await (await supabaseServer()).auth.getUser();
+  const user = await currentUser();
   if (!user) return;
   await disconnectAccount(user.id, String(form.get("account_id") ?? ""));
   revalidatePath("/settings");
@@ -55,7 +58,7 @@ async function disconnect(form: FormData) {
 
 async function revoke(form: FormData) {
   "use server";
-  const { data: { user } } = await (await supabaseServer()).auth.getUser();
+  const user = await currentUser();
   if (!user) return;
   const clientId = String(form.get("client_id") ?? "");
   const db = supabaseAdmin();
@@ -66,65 +69,85 @@ async function revoke(form: FormData) {
 
 export default async function Settings({ searchParams }: { searchParams: Promise<{ msg?: string }> }) {
   const sb = await supabaseServer();
-  const { data: { user } } = await sb.auth.getUser();
+  const user = await currentUser();
   if (!user) redirect("/login");
   const { msg } = await searchParams;
-  const { data: accounts } = await sb.from("accounts").select("id, provider, display_name, account_type, status, status_detail, can_send");
-  const { data: grants } = await supabaseAdmin().from("oauth_tokens").select("client_id, oauth_clients(client_name)").eq("user_id", user.id).eq("kind", "refresh").is("revoked_at", null).gt("expires_at", new Date().toISOString());
-  const apps = [...new Map((grants ?? []).map((g) => [g.client_id, (g.oauth_clients as unknown as { client_name: string } | null)?.client_name ?? g.client_id])).entries()];
-  const [{ data: clientRows }, { data: ruleRows, error: rulesErr }] = await Promise.all([
+  const [{ data: accountRows }, { data: clientRows }, { data: ruleRows, error: rulesErr }] = await Promise.all([
+    sb.from("accounts").select("id, provider, display_name, label, account_type, status, status_detail, can_send").order("provider"),
     sb.from("clients").select("id, name").order("name"),
     sb.from("client_rules").select("id, client_id, kind, pattern").order("pattern"),
   ]);
+  const accounts = (accountRows ?? []) as { id: string; provider: string; display_name: string; label: string | null; account_type: string; status: string; status_detail: string | null; can_send: boolean }[];
+  const manage = Object.fromEntries(await Promise.all(accounts.filter((a) => a.provider === "gmail").map(async (a) => [a.id, await gmailHasScope(a.id, MODIFY_SCOPE)] as const)));
   const clients = (clientRows ?? []) as { id: string; name: string }[];
   const rules = (ruleRows ?? []) as { id: string; client_id: string; kind: string; pattern: string }[];
-  const field = "rounded-lg border border-neutral-300 bg-transparent px-3 py-2 text-sm dark:border-neutral-700";
-  const btn = "rounded-lg border border-neutral-300 px-3 py-3 text-sm dark:border-neutral-700";
+  const live = PROVIDERS.filter((p) => p.stage === "live");
+  const connectHref = (id: string, write: boolean) => id === "slack" ? `/api/connect/slack${write ? "?write=1" : ""}` : `/api/connect/${id}${write ? "?write=1" : ""}`;
+  const section = "mb-3 mt-10 flex items-end justify-between gap-3";
+  const perm = (on: boolean, label: string) => (
+    <span className={`chip ${on ? "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300" : "bg-[var(--surface-2)] muted"}`}>{on ? <Icon name="check" className="h-3 w-3" /> : null}{label}</span>
+  );
+
   return (
-    <PageFrame title="Accounts &amp; settings">
-    <main className="mx-auto max-w-2xl px-4 py-6 md:py-8">
-      <h1 className="my-3 text-2xl font-semibold tracking-tight">Connect accounts</h1>
-      {msg && <p className="mb-3 rounded bg-neutral-100 p-3 text-sm dark:bg-neutral-900">{msg}</p>}
-      <p className="mb-4 text-sm text-neutral-500">Everything lands in one inbox, grouped by client. Read-only unless you choose sending.</p>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {PROVIDERS.filter((p) => p.stage === "live").map((p) => {
-          const ready = p.id === "slack" ? slackConfigured() : isConfigured(p);
+    <PageFrame title="Settings">
+    <main className="mx-auto max-w-3xl px-4 pb-16 pt-6 md:px-6">
+      {msg && <p role="status" className="mb-4 rounded-xl bg-[var(--accent-soft)] px-4 py-3 text-sm font-medium text-[var(--accent-text)]">{msg}</p>}
+
+      {/* ---------- connected ---------- */}
+      <div className={section + " !mt-2"}>
+        <div><h2 className="text-lg font-semibold tracking-tight">Your channels</h2><p className="text-sm muted">Rename them to whatever you remember them by, such as a client&apos;s name.</p></div>
+      </div>
+      <ul className="space-y-2">
+        {accounts.length === 0 && <li className="card p-5 text-sm muted">Nothing connected yet. Pick a channel below.</li>}
+        {accounts.map((a) => {
+          const c = channel(a.provider);
+          const reconnect = ["gmail", "outlook", "slack"].includes(a.provider) ? connectHref(a.provider, a.can_send) : null;
           return (
-            <section key={p.id} className="rounded-2xl bg-white p-4 ring-1 ring-neutral-200/70 dark:bg-neutral-900 dark:ring-neutral-800" aria-label={p.name}>
-              <h2 className="flex items-center gap-2 font-medium"><ProviderIcon provider={p.id} /> {p.name}
-                {!ready && <span className="ml-auto rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] font-normal text-neutral-500 dark:bg-neutral-800">Coming soon</span>}
-              </h2>
-              <p className="mb-3 mt-1 text-sm text-neutral-500">{p.blurb}</p>
-              {ready && p.id === "gmail" && (
-                <div className="grid gap-2 text-sm">
-                  <a className={btn} href="/api/connect/gmail?type=personal&write=1">Connect · read + send</a>
-                  <details><summary className="cursor-pointer text-xs text-neutral-500">More options</summary>
-                    <div className="mt-2 grid gap-2">
-                      <a className={btn} href="/api/connect/gmail?type=personal">Personal · read-only</a>
-                      <a className={btn} href="/api/connect/gmail?type=company">Company · read-only</a>
-                      <a className={btn} href="/api/connect/gmail?type=company&write=1">Company · read + send</a>
-                    </div>
-                  </details>
+            <li key={a.id} className="card flex flex-wrap items-center gap-3 p-3 sm:p-4">
+              <ChannelAvatar provider={a.provider} name={accountName(a)} />
+              <div className="min-w-0 flex-1">
+                <RenameAccount id={a.id} label={a.label} fallback={a.display_name} />
+                <p className="truncate text-xs muted">{c.name}{a.label ? ` · ${a.display_name}` : ""}</p>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {perm(true, "Read")}
+                  {perm(a.can_send, a.provider === "gmail" || a.provider === "outlook" ? "Send" : "Reply")}
+                  {a.provider === "gmail" && perm(Boolean(manage[a.id]), "Manage (read/unread, star, trash)")}
+                  {a.status !== "connected" && <span className="chip bg-amber-500/15 text-amber-700 dark:text-amber-300">{a.status === "needs_reauth" ? "Needs reconnect" : a.status === "error" ? "Sync error" : a.status.replace(/_/g, " ")}</span>}
                 </div>
-              )}
-              {ready && p.id === "outlook" && (
-                <div className="grid gap-2 text-sm">
-                  <a className={btn} href="/api/connect/outlook?type=personal&write=1">Connect · read + send</a>
-                  <details><summary className="cursor-pointer text-xs text-neutral-500">More options</summary>
-                    <div className="mt-2 grid gap-2">
-                      <a className={btn} href="/api/connect/outlook?type=personal">Personal · read-only</a>
-                      <a className={btn} href="/api/connect/outlook?type=company">Work account · read-only</a>
-                      <a className={btn} href="/api/connect/outlook?type=company&write=1">Work account · read + send</a>
-                    </div>
-                  </details>
-                </div>
-              )}
-              {ready && p.id === "slack" && (
-                <div className="grid gap-2 text-sm">
-                  <a className={btn} href="/api/connect/slack?write=1">Connect a workspace · read + reply</a>
-                  <details><summary className="cursor-pointer text-xs text-neutral-500">More options</summary>
-                    <div className="mt-2 grid gap-2"><a className={btn} href="/api/connect/slack">Connect a workspace · read-only</a></div>
-                  </details>
+                {a.status_detail && <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">{a.status_detail}</p>}
+              </div>
+              <div className="flex items-center gap-1.5">
+                {reconnect && (a.status !== "connected" || !a.can_send || (a.provider === "gmail" && !manage[a.id])) && (
+                  <a className="btn !py-1.5 !text-xs" href={connectHref(a.provider, true)}>{a.status !== "connected" ? "Reconnect" : "Upgrade access"}</a>
+                )}
+                <form action={disconnect}>
+                  <input type="hidden" name="account_id" value={a.id} />
+                  <ConfirmSubmit message={`Disconnect ${accountName(a)}? Its messages are removed from Unified Box. Nothing is deleted in ${c.name}.`} className="btn !py-1.5 !text-xs !text-red-600">Disconnect</ConfirmSubmit>
+                </form>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+
+      {/* ---------- add ---------- */}
+      <div className={section}><div><h2 className="text-lg font-semibold tracking-tight">Add a channel</h2><p className="text-sm muted">Sign in once; new messages then arrive automatically.</p></div></div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {live.map((p) => {
+          const ready = p.id === "slack" ? slackConfigured() : isConfigured(p);
+          const c = channel(p.id);
+          return (
+            <section key={p.id} aria-label={p.name} className="card flex flex-col p-4">
+              <div className="flex items-center gap-2.5">
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-white" style={{ background: c.color }}><ProviderIcon provider={p.id} /></span>
+                <h3 className="font-semibold">{p.name}</h3>
+                {!ready && <span className="chip ml-auto bg-[var(--surface-2)] muted">Coming soon</span>}
+              </div>
+              <p className="mb-4 mt-2 flex-1 text-sm muted">{p.blurb}</p>
+              {ready && ["gmail", "outlook", "slack"].includes(p.id) && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <a className="btn-primary" href={connectHref(p.id, true)}>Connect {c.name}</a>
+                  <a className="text-xs muted underline-offset-4 hover:underline" href={connectHref(p.id, false)}>or read-only</a>
                 </div>
               )}
               {ready && p.id === "whatsapp" && <WhatsAppForm />}
@@ -133,81 +156,60 @@ export default async function Settings({ searchParams }: { searchParams: Promise
           );
         })}
       </div>
-      <h2 className="mt-6 font-medium">On the roadmap</h2>
-      <ul className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
-        {PROVIDERS.filter((p) => p.stage !== "live").map((p) => (
-          <li key={p.id} className="flex gap-2 rounded-xl bg-neutral-50 p-3 text-neutral-600 dark:bg-neutral-900/60 dark:text-neutral-400">
-            <ProviderIcon provider={p.id} className="mt-0.5 h-4 w-4" />
-            <span><span className="font-medium text-neutral-800 dark:text-neutral-200">{p.name}</span>{p.stage === "unavailable" ? " · not possible" : " · coming"}<br /><span className="text-xs">{p.blurb}</span></span>
-          </li>
-        ))}
-      </ul>
-      <h2 className="mt-6 font-medium">Connected</h2>
-      <ul className="mt-2 space-y-2 text-sm">
-        {(accounts ?? []).length === 0 && <li className="text-neutral-500">No accounts yet. Connect one above.</li>}
-        {(accounts ?? []).map((a) => (
-          <li key={a.id} className="rounded-xl bg-white p-3 ring-1 ring-neutral-200/70 dark:bg-neutral-900 dark:ring-neutral-800">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <div className="flex items-center gap-1.5 font-medium"><ProviderIcon provider={a.provider} className="h-3.5 w-3.5" />{a.display_name}</div>
-                <div className="text-xs text-neutral-500">{providerInfo(a.provider)?.name ?? a.provider} · {a.account_type} · {a.status === "connected" ? "connected" : a.status.replace(/_/g, " ")} · {a.can_send ? "can reply" : "read-only"}</div>
-              </div>
-              <div className="flex items-center gap-3 text-sm">
-                {a.status !== "connected" && ["gmail", "outlook", "slack"].includes(a.provider) && <a className="text-blue-600" href={a.provider === "slack" ? `/api/connect/slack${a.can_send ? "?write=1" : ""}` : `/api/connect/${a.provider}?type=${a.account_type}${a.can_send ? "&write=1" : ""}`}>Reconnect</a>}
-                <form action={disconnect}>
-                  <input type="hidden" name="account_id" value={a.id} />
-                  <ConfirmSubmit message={`Disconnect ${a.display_name}? Its synced messages will be deleted from Unified Box. Nothing is deleted in the original app.`} className="text-red-600">Disconnect</ConfirmSubmit>
-                </form>
-              </div>
-            </div>
-            {a.status_detail && <div className="mt-1 text-xs text-red-600">{a.status_detail}</div>}
-          </li>
-        ))}
-      </ul>
-      <h2 className="mt-6 font-medium">Clients</h2>
-      <p className="mb-2 text-sm text-neutral-500">Group conversations by client. Add a sender email or domain and matching threads are tagged automatically (also across Gmail accounts).</p>
-      {rulesErr && <p className="mb-2 rounded bg-amber-50 p-2 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-200">Auto-tagging rules need database migration 0004 (see CHECKLIST.md). You can still create clients and assign threads by hand.</p>}
-      <form action={addClient} className="flex gap-2">
-        <input name="name" required maxLength={80} placeholder="New client, e.g. Greenbridge" className={`${field} min-w-0 flex-1`} />
-        <button className={btn}>Add</button>
+      <details className="mt-3 rounded-2xl border border-dashed border-[var(--border-strong)] px-4 py-3">
+        <summary className="cursor-pointer text-sm font-medium">On the roadmap: {PROVIDERS.filter((p) => p.stage !== "live").map((p) => p.name).join(", ")}</summary>
+        <ul className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+          {PROVIDERS.filter((p) => p.stage !== "live").map((p) => (
+            <li key={p.id} className="flex gap-2 muted"><ProviderIcon provider={p.id} className="mt-0.5 h-4 w-4 shrink-0" /><span><span className="font-medium text-[var(--text)]">{p.name}</span>{p.stage === "unavailable" ? " · not possible" : ""}<br /><span className="text-xs">{p.blurb}</span></span></li>
+          ))}
+        </ul>
+      </details>
+
+      {/* ---------- clients ---------- */}
+      <div className={section}>
+        <div><h2 className="text-lg font-semibold tracking-tight">Client groups</h2><p className="text-sm muted">Group conversations by client. Add a domain (acme.com) or an email address and matching messages are tagged automatically, across every channel.</p></div>
+      </div>
+      {rulesErr && <p className="mb-2 rounded-xl bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">Automatic tagging needs database migration 0004. You can still create clients and assign conversations by hand.</p>}
+      <form action={addClient} className="card flex gap-2 p-2">
+        <input name="name" required maxLength={80} placeholder="New client name, e.g. Greenbridge" aria-label="New client name" className="field !border-0 !shadow-none" />
+        <button className="btn-primary shrink-0"><Icon name="plus" /> Add client</button>
       </form>
-      <ul className="mt-3 space-y-2 text-sm">
-        {clients.map((c) => (
-          <li key={c.id} className="rounded-xl bg-white p-3 ring-1 ring-neutral-200/70 dark:bg-neutral-900 dark:ring-neutral-800">
-            <div className="flex items-center justify-between">
-              <span className="font-medium">{c.name}</span>
-              <form action={removeClient}><input type="hidden" name="client_id" value={c.id} /><ConfirmSubmit message={`Delete client ${c.name}? Threads stay, they just lose this tag.`} className="text-xs text-red-600">Delete</ConfirmSubmit></form>
-            </div>
-            <ul className="mt-1 space-y-1">
-              {rules.filter((r) => r.client_id === c.id).map((r) => (
-                <li key={r.id} className="flex items-center justify-between text-xs text-neutral-500">
-                  <span>{r.kind === "domain" ? "@" : ""}{r.pattern}</span>
-                  <form action={removeRule}><input type="hidden" name="rule_id" value={r.id} /><button className="text-red-600">Remove</button></form>
-                </li>
-              ))}
-            </ul>
-            {!rulesErr && (
-              <form action={addClientRule} className="mt-2 flex flex-wrap gap-2">
-                <input type="hidden" name="client_id" value={c.id} />
-                <select name="kind" className={field} aria-label="Rule type"><option value="domain">Domain</option><option value="email">Email</option></select>
-                <input name="pattern" required placeholder="greenbridge.io or jane@greenbridge.io" className={`${field} min-w-0 flex-1`} />
-                <button className={btn}>Add rule</button>
-              </form>
-            )}
-          </li>
-        ))}
-      </ul>
-      <h2 className="mt-6 font-medium">Connected AI apps</h2>
-      <p className="mb-2 text-sm text-neutral-500">Connect ChatGPT, Gemini, Grok and others, and manage access keys, on <Link href="/connect-ai" className="text-blue-600 underline">Connect your AI</Link>.</p>
-      <ul className="mt-2 space-y-2 text-sm">
-        {apps.length === 0 && <li className="text-neutral-500">None yet. See Connect your AI.</li>}
-        {apps.map(([id, name]) => (
-          <li key={id} className="flex items-center justify-between rounded-xl bg-white p-3 ring-1 ring-neutral-200/70 dark:bg-neutral-900 dark:ring-neutral-800">
-            <span>{name}</span>
-            <form action={revoke}><input type="hidden" name="client_id" value={id} /><button className="text-red-600">Revoke</button></form>
-          </li>
-        ))}
-      </ul>
+      <div className="mt-3 grid gap-3">
+        {clients.length === 0 && <p className="px-1 text-sm muted">No clients yet.</p>}
+        {clients.map((c) => {
+          const mine = rules.filter((r) => r.client_id === c.id);
+          return (
+            <section key={c.id} aria-label={c.name} className="card p-4">
+              <div className="flex items-center gap-3">
+                <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-500/15 text-xs font-bold text-violet-700 dark:text-violet-300">{c.name.slice(0, 2).toUpperCase()}</span>
+                <div className="min-w-0 flex-1"><h3 className="truncate font-semibold">{c.name}</h3><p className="text-xs muted">{mine.length ? `${mine.length} matching rule${mine.length === 1 ? "" : "s"}` : "No rules yet, so tag conversations by hand or add a rule"}</p></div>
+                <a href={`/?client=${c.id}`} className="btn !py-1.5 !text-xs">View</a>
+                <form action={removeClient}><input type="hidden" name="client_id" value={c.id} /><ConfirmSubmit message={`Delete client ${c.name}? Conversations stay, they just lose this tag.`} className="btn !py-1.5 !text-xs !text-red-600">Delete</ConfirmSubmit></form>
+              </div>
+              {mine.length > 0 && (
+                <ul className="mt-3 flex flex-wrap gap-1.5">
+                  {mine.map((r) => (
+                    <li key={r.id} className="inline-flex items-center gap-1 rounded-full bg-[var(--surface-2)] py-1 pl-3 pr-1 text-xs">
+                      <span className="muted">{r.kind === "domain" ? "Domain" : "Email"}</span><span className="font-medium">{r.kind === "domain" ? `@${r.pattern}` : r.pattern}</span>
+                      <form action={removeRule}><input type="hidden" name="rule_id" value={r.id} /><button aria-label={`Remove ${r.pattern}`} title="Remove" className="inline-flex h-5 w-5 items-center justify-center rounded-full muted hover:bg-[var(--surface-3)] hover:text-red-600"><Icon name="close" className="h-3 w-3" /></button></form>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {!rulesErr && (
+                <form action={addClientRule} className="mt-3 flex flex-wrap gap-2 border-t border-[var(--border)] pt-3">
+                  <input type="hidden" name="client_id" value={c.id} />
+                  <select name="kind" aria-label="Rule type" className="field !w-auto"><option value="domain">Domain</option><option value="email">Email</option></select>
+                  <input name="pattern" required placeholder="acme.com or jane@acme.com" aria-label="Domain or email" className="field min-w-0 flex-1" />
+                  <button className="btn">Add rule</button>
+                </form>
+              )}
+            </section>
+          );
+        })}
+      </div>
+
+      <div className={section}><div><h2 className="text-lg font-semibold tracking-tight">AI apps</h2><p className="text-sm muted">Connect Claude, ChatGPT and others, and see or revoke their access, on <Link href="/connect-ai" className="font-medium text-[var(--accent-text)] hover:underline">Connect your AI</Link>.</p></div></div>
     </main>
     </PageFrame>
   );

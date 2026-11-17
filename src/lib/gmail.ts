@@ -5,6 +5,8 @@ import { decodeEntities, htmlToText, looksAutomated, parseFrom } from "./mail-te
 
 export const READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
 export const SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
+/** Lets read/unread, star and trash made in Unified Box show up in Gmail too (requested with "read + send"). */
+export const MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify";
 
 export function authUrl(state: string, withSend: boolean) {
   const p = new URLSearchParams({
@@ -14,7 +16,7 @@ export function authUrl(state: string, withSend: boolean) {
     access_type: "offline",
     prompt: "consent",
     include_granted_scopes: "true",
-    scope: ["openid", "email", READ_SCOPE, ...(withSend ? [SEND_SCOPE] : [])].join(" "),
+    scope: ["openid", "email", "profile", READ_SCOPE, ...(withSend ? [SEND_SCOPE, MODIFY_SCOPE] : [])].join(" "),
     state,
   });
   return `https://accounts.google.com/o/oauth2/v2/auth?${p}`;
@@ -37,6 +39,13 @@ export async function exchangeCode(code: string): Promise<Tokens & { id_token: s
   const j = await r.json();
   if (!r.ok || !j.refresh_token) throw new Error(`Google token exchange failed: ${j.error_description ?? j.error ?? "no refresh token"}`);
   return { ...j, expires_at: Date.now() + j.expires_in * 1000 };
+}
+
+/** Identity claims from the id_token we just received directly from Google over TLS (token endpoint + client secret). */
+export function idTokenClaims(idToken: string): { email: string; emailVerified: boolean; name: string } {
+  const p = JSON.parse(Buffer.from(idToken.split(".")[1], "base64url").toString());
+  if (!p.email) throw new Error("No email in id_token");
+  return { email: String(p.email).toLowerCase(), emailVerified: p.email_verified === true || p.email_verified === "true", name: String(p.name ?? "") };
 }
 
 /** Decode the email from the id_token we just received directly from Google over TLS. */
@@ -206,4 +215,20 @@ export async function sendMail(accountId: string, m: OutgoingMail) {
     method: "POST",
     body: JSON.stringify({ raw: Buffer.from(raw).toString("base64url"), ...(m.threadId ? { threadId: m.threadId } : {}) }),
   });
+}
+
+/** True when the stored grant for this account includes `scope`. */
+export async function gmailHasScope(accountId: string, scope: string) {
+  const { data } = await supabaseAdmin().from("account_secrets").select("tokens_enc").eq("account_id", accountId).maybeSingle();
+  if (!data) return false;
+  try { return String((JSON.parse(decrypt(data.tokens_enc)) as Tokens).scope ?? "").split(" ").includes(scope); } catch { return false; }
+}
+
+/** Adds/removes labels on a whole Gmail conversation (UNREAD, STARRED, ...). Needs gmail.modify. */
+export async function gmailModifyThread(accountId: string, threadId: string, add: string[], remove: string[]) {
+  await gfetch(accountId, `threads/${encodeURIComponent(threadId)}/modify`, { method: "POST", body: JSON.stringify({ addLabelIds: add, removeLabelIds: remove }) });
+}
+/** Moves a Gmail conversation to Trash (or back). Needs gmail.modify. */
+export async function gmailTrashThread(accountId: string, threadId: string, restore = false) {
+  await gfetch(accountId, `threads/${encodeURIComponent(threadId)}/${restore ? "untrash" : "trash"}`, { method: "POST" });
 }

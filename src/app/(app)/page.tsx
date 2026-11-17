@@ -1,6 +1,8 @@
 import Link from "next/link";
+import { currentUser } from "@/lib/auth";
 import { inboxSummary } from "@/lib/inbox-summary";
 import { forwardBlock, isGroup, replyRecipients, replySubject, type Msg } from "@/lib/reply";
+import { cleanQuery, matchingThreadIds } from "@/lib/search";
 import { supabaseServer } from "@/lib/supabase/server";
 import { assignClientAction } from "../actions";
 import { Landing } from "../landing";
@@ -9,54 +11,72 @@ import { DraftActions } from "./approvals/draft-actions";
 import { LocalTime } from "../local-time";
 import { MarkSeen } from "../mark-seen";
 import { MessageBody } from "../message-body";
+import { ReaderActions, ScrollToDraft } from "../reader-actions";
+import { SearchBox } from "../search-box";
 import { MenuButton, SyncStatus } from "../shell";
-import { Avatar, Icon, ProviderIcon, statusDot } from "../ui";
+import { ThreadList, type ListThread } from "../thread-list";
+import { accountName, Avatar, channel, ChannelTag, Icon, shortName } from "../ui";
 
-type Thread = { id: string; subject: string | null; snippet: string | null; last_message_at: string; unread: boolean; needs_reply: boolean; last_from: string | null; account_id: string; accounts: { display_name: string; provider: string } | null; clients: { name: string } | null };
-type Filter = "all" | "unread" | "reply";
-type Search = { account?: string; client?: string; thread?: string; f?: string; q?: string; notice?: string };
+type ThreadRow = {
+  id: string; subject: string | null; snippet: string | null; last_message_at: string; unread: boolean; needs_reply: boolean; last_from: string | null;
+  account_id: string; starred: boolean | null; snoozed_until: string | null; trashed_at: string | null; clients: { name: string } | null;
+};
+const VIEWS = ["all", "unread", "reply", "starred", "snoozed", "trash"] as const;
+type View = (typeof VIEWS)[number];
+type Search = { account?: string; client?: string; provider?: string; thread?: string; f?: string; q?: string; notice?: string; draft?: string };
 
 export default async function Home({ searchParams }: { searchParams: Promise<Search> }) {
-  const sb = await supabaseServer();
-  const { data: { user } } = await sb.auth.getUser();
+  const user = await currentUser();
   if (!user) return <Landing />;
+  const sb = await supabaseServer();
   const sp = await searchParams;
   const { account, client, thread } = sp;
-  const filter: Filter = sp.f === "unread" || sp.f === "reply" ? sp.f : "all";
-  const q = (sp.q ?? "").replace(/[%,()*_\\]/g, " ").trim().slice(0, 100);
+  const view: View = (VIEWS as readonly string[]).includes(sp.f ?? "") ? (sp.f as View) : "all";
+  const q = cleanQuery(sp.q);
 
   const { accounts, clients, perAcct, unreadTotal, replyTotal } = await inboxSummary();
+  const provider = sp.provider && accounts.some((a) => a.provider === sp.provider) ? sp.provider : undefined;
+  const acctById = new Map(accounts.map((a) => [a.id, a]));
 
-  let tq = sb.from("threads").select("id, subject, snippet, last_message_at, unread, needs_reply, last_from, account_id, accounts(display_name, provider), clients(name)").order("last_message_at", { ascending: false }).limit(150);
+  const searchIds = q ? await matchingThreadIds(sb, user.id, q) : null;
+  let tq = sb.from("threads").select("id, subject, snippet, last_message_at, unread, needs_reply, last_from, account_id, starred, snoozed_until, trashed_at, clients(name)").eq("user_id", user.id).order("last_message_at", { ascending: false }).limit(150);
+  if (view === "trash") tq = tq.not("trashed_at", "is", null);
+  else {
+    tq = tq.is("trashed_at", null);
+    tq = view === "snoozed" ? tq.not("snoozed_until", "is", null) : tq.is("snoozed_until", null);
+  }
   if (account) tq = tq.eq("account_id", account);
+  if (provider) tq = tq.in("account_id", accounts.filter((a) => a.provider === provider).map((a) => a.id));
   if (client) tq = tq.eq("client_id", client);
-  if (filter === "unread") tq = tq.eq("unread", true);
-  if (filter === "reply") tq = tq.eq("needs_reply", true);
-  if (q) tq = tq.or(`subject.ilike.%${q}%,snippet.ilike.%${q}%,last_from.ilike.%${q}%`);
-  const threads = ((await tq).data ?? []) as unknown as Thread[];
+  if (view === "unread") tq = tq.eq("unread", true);
+  if (view === "reply") tq = tq.eq("needs_reply", true);
+  if (view === "starred") tq = tq.eq("starred", true);
+  if (searchIds) tq = tq.in("id", searchIds.length ? searchIds.slice(0, 200) : ["00000000-0000-0000-0000-000000000000"]);
 
-  const [{ data: msgRows }, { data: cur }, { data: aiDrafts }] = thread
-    ? await Promise.all([
-        sb.from("messages").select("id, from_name, from_addr, to_addrs, cc_addrs, sent_at, is_outgoing, body_text, subject").eq("thread_id", thread).order("sent_at"),
-        sb.from("threads").select("id, subject, client_id, unread, external_id, account_id").eq("id", thread).maybeSingle(),
-        sb.from("drafts").select("id, subject, body, to_addrs, cc_addrs, created_by").eq("thread_id", thread).eq("status", "pending").order("created_at"),
-      ])
-    : [{ data: null }, { data: null }, { data: null }];
+  const [{ data: threadRows }, { data: msgRows }, { data: cur }, { data: aiDrafts }] = await Promise.all([
+    tq,
+    thread ? sb.from("messages").select("id, from_name, from_addr, to_addrs, cc_addrs, sent_at, is_outgoing, body_text, subject").eq("thread_id", thread).order("sent_at") : Promise.resolve({ data: null }),
+    thread ? sb.from("threads").select("id, subject, client_id, unread, external_id, account_id, starred").eq("id", thread).maybeSingle() : Promise.resolve({ data: null }),
+    thread ? sb.from("drafts").select("id, subject, body, to_addrs, cc_addrs, created_by").eq("thread_id", thread).eq("status", "pending").order("created_at") : Promise.resolve({ data: null }),
+  ]);
+  const threads = (threadRows ?? []) as unknown as ThreadRow[];
   const messages = (msgRows ?? []) as (Msg & { id: string })[];
 
   const qs = (o: Partial<Search>) => {
-    const p = new URLSearchParams(Object.entries({ account, client, f: filter === "all" ? undefined : filter, q: q || undefined, ...o }).filter(([, v]) => v) as [string, string][]);
+    const p = new URLSearchParams(Object.entries({ account, client, provider, f: view === "all" ? undefined : view, q: q || undefined, ...o }).filter(([, v]) => v) as [string, string][]);
     return p.size ? `/?${p}` : "/";
   };
-  const title = account ? accounts.find((a) => a.id === account)?.display_name ?? "Inbox" : client ? clients.find((c) => c.id === client)?.name ?? "Client" : "All inboxes";
+  const selAcct = account ? acctById.get(account) : undefined;
+  const title = q ? `Results for “${q}”` : selAcct ? accountName(selAcct) : provider ? `All ${channel(provider).name}` : client ? clients.find((c) => c.id === client)?.name ?? "Client" : "All inboxes";
   const open = Boolean(thread && cur);
 
   // ---------- reader ----------
   let reader: React.ReactNode = null;
   if (open && cur) {
-    const acct = accounts.find((a) => a.id === cur.account_id);
+    const acct = acctById.get(cur.account_id);
     const self = acct?.external_id ?? "";
     const last = messages.at(-1);
+    const isChat = Boolean(acct && !["gmail", "outlook"].includes(acct.provider));
     const presets: Record<"reply" | "reply_all" | "forward", Preset> = {
       reply: { ...replyRecipients("reply", messages, self), subject: replySubject("reply", cur.subject), body: "" },
       reply_all: { ...replyRecipients("reply_all", messages, self), subject: replySubject("reply_all", cur.subject), body: "" },
@@ -69,34 +89,38 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
       : acct.provider === "whatsapp" ? `https://wa.me/${encodeURIComponent(cur.external_id)}`
       : acct.provider === "telegram" ? "https://web.telegram.org/"
       : null;
+    const reconnectHref = acct?.provider === "outlook" ? "/api/connect/outlook?write=1" : acct?.provider === "slack" ? "/api/connect/slack?write=1" : acct?.provider === "gmail" ? "/api/connect/gmail?write=1" : "/settings";
     const people = (m: Msg) => [...(m.to_addrs ?? []), ...(m.cc_addrs ?? [])].map((x) => (x.toLowerCase() === self.toLowerCase() ? "me" : x)).join(", ");
+    const closeHref = qs({ thread: undefined, draft: undefined });
 
     reader = (
-      <section className="flex min-w-0 flex-1 flex-col bg-white dark:bg-neutral-900" aria-label="Conversation">
+      <section className="flex min-w-0 flex-1 flex-col bg-[var(--surface)] lg:rounded-tl-2xl lg:border-l lg:border-t lg:border-[var(--border)]" aria-label="Conversation">
         <MarkSeen threadId={cur.id} unread={Boolean(cur.unread)} />
-        <header className="flex items-start gap-2 border-b border-neutral-200/70 px-4 py-3 dark:border-neutral-800 md:px-6">
-          <Link href={qs({ thread: undefined })} aria-label="Close conversation" className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800">
+        {sp.draft && <ScrollToDraft id={sp.draft} />}
+        <header className="flex items-start gap-2 border-b border-[var(--border)] px-3 py-3 md:px-6">
+          <Link href={closeHref} aria-label="Close conversation" className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg muted hover:bg-[var(--surface-2)] hover:text-[var(--text)]">
             <Icon name="back" className="h-5 w-5 lg:hidden" /><Icon name="close" className="hidden h-5 w-5 lg:block" />
           </Link>
           <div className="min-w-0 flex-1">
-            <h1 className="text-lg font-semibold leading-snug md:text-xl">{cur.subject || "(no subject)"}</h1>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-neutral-500">
-              <span className="inline-flex items-center gap-1"><ProviderIcon provider={acct?.provider} className="h-3.5 w-3.5" /> {acct?.display_name}</span>
+            <h1 className="text-lg font-semibold leading-snug tracking-tight md:text-xl">{cur.subject || "(no subject)"}</h1>
+            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs muted">
+              {acct && <ChannelTag provider={acct.provider} label={accountName(acct)} />}
               <span>{messages.length} message{messages.length === 1 ? "" : "s"}</span>
               {clients.length > 0 && (
                 <form action={assignClientAction} className="inline-flex items-center gap-1">
                   <input type="hidden" name="thread" value={cur.id} />
-                  <select name="client" defaultValue={cur.client_id ?? ""} aria-label="Client" className="rounded-md border border-neutral-200 bg-transparent px-1.5 py-0.5 dark:border-neutral-700">
+                  <select name="client" defaultValue={cur.client_id ?? ""} aria-label="Client" className="h-7 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-1.5 text-xs">
                     <option value="">No client</option>
                     {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
-                  <button className="rounded-md px-1.5 py-0.5 text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800">Save</button>
+                  <button className="h-7 rounded-lg px-2 font-medium text-[var(--accent-text)] hover:bg-[var(--surface-2)]">Save</button>
                 </form>
               )}
             </div>
           </div>
+          <ReaderActions id={cur.id} starred={Boolean(cur.starred)} closeHref={closeHref} />
         </header>
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6">
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 md:px-6">
           <div className="mx-auto max-w-3xl space-y-3">
             {messages.map((m, i) => {
               const name = m.is_outgoing ? "You" : m.from_name || m.from_addr || "Unknown";
@@ -105,48 +129,41 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
                   <Avatar name={m.from_name || m.from_addr || "?"} you={m.is_outgoing} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline justify-between gap-3">
-                      <span className="truncate text-sm font-semibold">{name}{!m.is_outgoing && m.from_name && <span className="ml-1.5 hidden font-normal text-neutral-500 sm:inline">{m.from_addr}</span>}</span>
-                      <span className="shrink-0 text-xs text-neutral-500"><LocalTime iso={m.sent_at} mode="full" /></span>
+                      <span className="truncate text-sm font-semibold">{name}{!m.is_outgoing && m.from_name && !isChat && <span className="ml-1.5 hidden font-normal muted sm:inline">{m.from_addr}</span>}</span>
+                      <span className="shrink-0 text-xs muted"><LocalTime iso={m.sent_at} mode="full" /></span>
                     </div>
-                    {people(m) && !["whatsapp", "telegram"].includes(acct?.provider ?? "") && <p className="truncate text-xs text-neutral-500">to {people(m)}</p>}
+                    {people(m) && !isChat && <p className="truncate text-xs muted">to {people(m)}</p>}
                   </div>
                 </div>
               );
               const isLast = i === messages.length - 1;
               return isLast || messages.length <= 2 ? (
-                <article key={m.id} className={`rounded-2xl border p-3 sm:p-4 ${m.is_outgoing ? "border-blue-100 bg-blue-50/50 dark:border-blue-900/50 dark:bg-blue-950/20" : "border-neutral-200/70 dark:border-neutral-800"}`}>
+                <article key={m.id} className={`rounded-2xl border p-3 sm:p-4 ${m.is_outgoing ? "border-[var(--accent)]/20 bg-[var(--accent-soft)]" : "border-[var(--border)]"}`}>
                   {head}
-                  <div className="mt-3 md:pl-12">{m.body_text?.trim() ? <MessageBody text={m.body_text} /> : <p className="text-sm italic text-neutral-500">No text in this message (it may contain only images or attachments).</p>}</div>
+                  <div className="mt-3 md:pl-12">{m.body_text?.trim() ? <MessageBody text={m.body_text} /> : <p className="text-sm italic muted">No text in this message (it may contain only images or attachments).</p>}</div>
                 </article>
               ) : (
-                <details key={m.id} className="group rounded-2xl border border-neutral-200/70 p-3 sm:p-4 open:pb-4 dark:border-neutral-800">
+                <details key={m.id} className="group rounded-2xl border border-[var(--border)] p-3 open:pb-4 sm:p-4">
                   <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
                     {head}
-                    <p className="mt-1 truncate text-sm text-neutral-500 group-open:hidden md:pl-12">{(m.body_text ?? "").replace(/\s+/g, " ").slice(0, 160)}</p>
+                    <p className="mt-1 truncate text-sm muted group-open:hidden md:pl-12">{(m.body_text ?? "").replace(/\s+/g, " ").slice(0, 160)}</p>
                   </summary>
                   <div className="mt-3 md:pl-12"><MessageBody text={m.body_text ?? ""} /></div>
                 </details>
               );
             })}
             {((aiDrafts ?? []) as { id: string; subject: string; body: string; to_addrs: string[]; cc_addrs: string[] | null; created_by: string }[]).map((d) => (
-              <div key={d.id} className="rounded-2xl border border-violet-200 bg-violet-50/60 p-4 dark:border-violet-900/60 dark:bg-violet-950/20">
-                <p className="mb-1 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-800 dark:text-violet-200">
-                  <Icon name="spark" className="h-3.5 w-3.5" /> {d.created_by === "claude" ? "Draft from your AI assistant" : "Your saved draft"} · not sent yet
+              <div key={d.id} id={`draft-${d.id}`} className={`scroll-mt-24 rounded-2xl border p-4 ${sp.draft === d.id ? "border-violet-400 ring-4 ring-violet-500/15" : "border-violet-300/60"} bg-violet-500/5`}>
+                <p className="mb-1 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-700 dark:text-violet-300">
+                  <Icon name="spark" className="h-3.5 w-3.5" /> {d.created_by === "claude" ? "Reply drafted by your AI" : "Your saved draft"} · not sent yet
                 </p>
-                <p className="mb-2 text-xs text-neutral-500">{d.to_addrs.length ? `To ${[...d.to_addrs, ...(d.cc_addrs ?? [])].join(", ")}` : "Reply in this chat"}</p>
+                <p className="mb-2 text-xs muted">{d.to_addrs.length ? `To ${[...d.to_addrs, ...(d.cc_addrs ?? [])].join(", ")}` : "Reply in this chat"}</p>
                 <DraftActions id={d.id} subject={d.subject} body={d.body} />
               </div>
             ))}
             <div className="pt-2">
-              <Composer
-                threadId={cur.id}
-                provider={acct?.provider ?? "gmail"}
-                canSend={Boolean(acct?.can_send)}
-                showReplyAll={isGroup(messages, self)}
-                presets={presets}
-                reconnectHref={acct?.provider === "outlook" ? `/api/connect/outlook?type=${acct?.account_type ?? "personal"}&write=1` : acct?.provider === "slack" ? "/api/connect/slack?write=1" : acct?.provider === "whatsapp" || acct?.provider === "telegram" ? "/settings" : `/api/connect/gmail?type=${acct?.account_type ?? "personal"}&write=1`}
-                openHref={openHref}
-              />
+              <Composer threadId={cur.id} provider={acct?.provider ?? "gmail"} canSend={Boolean(acct?.can_send)} showReplyAll={isGroup(messages, self)}
+                presets={presets} reconnectHref={reconnectHref} openHref={openHref} />
             </div>
           </div>
         </div>
@@ -155,107 +172,75 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   }
 
   // ---------- list ----------
-  const wide = !open;
-  const tab = (k: Filter, label: string, n?: number) => (
+  const listThreads: ListThread[] = threads.map((t) => {
+    const a = acctById.get(t.account_id);
+    return {
+      id: t.id, subject: t.subject, snippet: t.snippet, last_message_at: t.last_message_at, unread: t.unread, needs_reply: t.needs_reply, last_from: t.last_from,
+      starred: Boolean(t.starred), snoozed_until: t.snoozed_until, trashed_at: t.trashed_at, provider: a?.provider ?? null,
+      accountLabel: a ? shortName(accountName(a)) : "", client: t.clients?.name ?? null,
+    };
+  });
+  const hrefFor = Object.fromEntries(threads.map((t) => [t.id, qs({ thread: t.id, draft: undefined })]));
+  const tab = (k: View, label: string, n?: number) => (
     <Link key={k} href={qs({ f: k === "all" ? undefined : k, thread: undefined })}
-      className={`rounded-full px-3 py-1 text-sm transition ${filter === k ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900" : "text-neutral-600 hover:bg-neutral-200/60 dark:text-neutral-400 dark:hover:bg-neutral-800"}`}>
-      {label}{n ? <span className="ml-1 tabular-nums opacity-70">{n}</span> : null}
+      className={`shrink-0 rounded-full px-3 py-1.5 text-[13px] font-medium transition ${view === k ? "bg-[var(--text)] text-[var(--bg)]" : "muted hover:bg-[var(--surface-2)] hover:text-[var(--text)]"}`}>
+      {label}{n ? <span className="ml-1.5 tabular-nums opacity-70">{n}</span> : null}
     </Link>
   );
+  const emptyText = q ? `Nothing matches “${q}”.` : view === "trash" ? "Trash is empty." : view === "snoozed" ? "Nothing snoozed." : view === "starred" ? "Star important conversations to find them here." : accounts.length ? "New messages appear here automatically." : "Connect an inbox to get started.";
 
   const list = (
-    <section aria-label="Conversations" className={`${open ? "hidden lg:flex lg:w-[380px] xl:w-[420px] lg:shrink-0 lg:border-r lg:border-neutral-200/70 dark:lg:border-neutral-800" : "flex flex-1"} min-h-0 min-w-0 flex-col`}>
-      <div className="flex items-center gap-1 overflow-x-auto px-3 py-2 no-scrollbar md:px-4">
-        {tab("all", "All")}{tab("unread", "Unread", unreadTotal)}{tab("reply", "Needs reply", replyTotal)}
+    <section aria-label="Conversations" className={`${open ? "hidden lg:flex lg:w-[400px] lg:shrink-0 xl:w-[440px]" : "flex flex-1"} min-h-0 min-w-0 flex-col`}>
+      <div className="flex items-center gap-1 overflow-x-auto px-3 py-2.5 no-scrollbar md:px-4">
+        {tab("all", "All")}{tab("unread", "Unread", unreadTotal)}{tab("reply", "Needs reply", replyTotal)}{tab("starred", "Starred")}{tab("snoozed", "Snoozed")}{tab("trash", "Trash")}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4 md:px-3">
-        {threads.length === 0 && (
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-6 md:px-3">
+        {threads.length === 0 ? (
           <div className="mx-auto mt-16 max-w-sm text-center">
-            <div className="mx-auto mb-3 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-neutral-200/60 text-neutral-500 dark:bg-neutral-800"><Icon name="inbox" className="h-6 w-6" /></div>
-            <p className="font-medium">{q ? "No matches" : filter === "all" ? "No conversations yet" : "All caught up"}</p>
-            <p className="mt-1 text-sm text-neutral-500">{q ? `Nothing matches “${q}”.` : accounts.length ? "New mail appears here after a sync." : "Connect an inbox to get started."}</p>
-            {!accounts.length && <Link href="/settings" className="mt-4 inline-block rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white dark:bg-white dark:text-neutral-900">Connect an inbox</Link>}
+            <div className="mx-auto mb-3 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--surface-2)] muted"><Icon name={q ? "search" : "inbox"} className="h-6 w-6" /></div>
+            <p className="font-semibold">{q ? "No matches" : view === "all" ? "No conversations yet" : "All clear"}</p>
+            <p className="mt-1 text-sm muted">{emptyText}</p>
+            {q && <Link href={qs({ q: undefined })} className="btn mt-4">Clear search</Link>}
+            {!accounts.length && <Link href="/settings" className="btn-primary mt-4">Connect an inbox</Link>}
           </div>
+        ) : (
+          <ThreadList threads={listThreads} activeId={thread ?? null} hrefFor={hrefFor} showChannel={!account} view={view} />
         )}
-        <ul className="space-y-1">
-          {threads.map((t) => {
-            const active = thread === t.id;
-            const isChat = Boolean(t.accounts?.provider && !["gmail", "outlook"].includes(t.accounts.provider));
-            const whoEmail = t.last_from || "(unknown)";
-            const who = isChat ? t.subject || whoEmail : whoEmail;
-            return (
-              <li key={t.id}>
-                <Link href={qs({ thread: t.id })} aria-current={active ? "true" : undefined}
-                  className={`group relative flex gap-3 rounded-xl py-2.5 pl-4 pr-3 transition ${
-                    active ? "bg-white shadow-sm ring-1 ring-neutral-300 dark:bg-neutral-800 dark:ring-neutral-600"
-                    : t.unread ? "bg-white shadow-sm ring-1 ring-blue-200/80 hover:ring-blue-300 dark:bg-neutral-900 dark:ring-blue-900/70 dark:hover:ring-blue-800"
-                    : "hover:bg-white/70 dark:hover:bg-neutral-900/60"} ${wide ? "lg:items-center" : ""}`}>
-                  {t.unread && <span className="absolute inset-y-2 left-1 w-1 rounded-full bg-blue-600" aria-hidden />}
-                  {t.unread && <span className="sr-only">Unread. </span>}
-                  <Avatar name={who} you={who === "You"} size="md" />
-                  <div className={`min-w-0 flex-1 ${wide ? "lg:flex lg:items-center lg:gap-4" : ""}`}>
-                    <div className={`flex items-baseline gap-2 ${wide ? "lg:w-52 lg:shrink-0" : ""}`}>
-                      <span className={`truncate text-sm ${t.unread ? "font-bold text-neutral-950 dark:text-white" : "text-neutral-600 dark:text-neutral-400"}`}>{who}</span>
-                      <span className={`ml-auto shrink-0 text-xs ${t.unread ? "font-semibold text-blue-600 dark:text-blue-400" : "text-neutral-500"} ${wide ? "lg:hidden" : ""}`}><LocalTime iso={t.last_message_at} /></span>
-                    </div>
-                    <div className={`min-w-0 ${wide ? "lg:flex lg:flex-1 lg:items-center lg:gap-2" : ""}`}>
-                      {!isChat && <p className={`truncate text-sm ${t.unread ? "font-semibold text-neutral-950 dark:text-white" : "text-neutral-600 dark:text-neutral-400"} ${wide ? "lg:max-w-[45%] lg:shrink-0" : ""}`}>{t.subject || "(no subject)"}</p>}
-                      <p className={`truncate text-sm ${t.unread ? "text-neutral-600 dark:text-neutral-300" : "text-neutral-500 dark:text-neutral-500"} ${wide ? "lg:min-w-0 lg:flex-1" : ""}`}>{wide && !isChat && <span className="hidden lg:inline">— </span>}{isChat && t.last_from === "You" ? "You: " : ""}{t.snippet}</p>
-                    </div>
-                    <div className={`mt-1 flex items-center gap-1.5 ${wide ? "lg:mt-0 lg:shrink-0" : ""}`}>
-                      {!account && t.accounts && <span className="inline-flex max-w-40 items-center gap-1 truncate rounded-md bg-neutral-100 px-1.5 py-0.5 text-[11px] text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400"><ProviderIcon provider={t.accounts.provider} className="h-3 w-3" />{t.accounts.display_name.split("@")[0]}</span>}
-                      {t.clients?.name && <span className="rounded-md bg-violet-100 px-1.5 py-0.5 text-[11px] font-medium text-violet-800 dark:bg-violet-950 dark:text-violet-200">{t.clients.name}</span>}
-                      {t.needs_reply && <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-200">Reply</span>}
-                      {wide && <span className={`ml-auto hidden w-16 text-right text-xs lg:inline ${t.unread ? "font-semibold text-blue-600 dark:text-blue-400" : "text-neutral-500"}`}><LocalTime iso={t.last_message_at} /></span>}
-                    </div>
-                  </div>
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
       </div>
     </section>
   );
 
   return (
     <>
-      {sp.notice === "password-updated" && <p className="bg-emerald-50 px-4 py-2 text-center text-sm text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200">Your password was updated.</p>}
-      <header className={`${open ? "hidden md:flex" : "flex"} items-center gap-2 border-b border-neutral-200/70 bg-neutral-100/80 px-3 py-2 backdrop-blur dark:border-neutral-800 dark:bg-neutral-950/80 md:px-4`}>
+      {sp.notice === "password-updated" && <p className="bg-emerald-500/10 px-4 py-2 text-center text-sm text-emerald-700 dark:text-emerald-300">Your password was updated.</p>}
+      <header className={`${open ? "hidden lg:flex" : "flex"} h-14 shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--surface)]/80 px-3 backdrop-blur md:gap-3 md:px-5`}>
         <MenuButton />
-        <div className="min-w-0 shrink">
-          <h2 className="truncate text-sm font-semibold md:text-base">{title}</h2>
-        </div>
-        <form action="/" className="ml-auto flex min-w-0 max-w-md flex-1 items-center md:ml-4">
-          {account && <input type="hidden" name="account" value={account} />}
-          {client && <input type="hidden" name="client" value={client} />}
-          {filter !== "all" && <input type="hidden" name="f" value={filter} />}
-          <label className="flex w-full items-center gap-2 rounded-xl bg-white px-3 py-1.5 ring-1 ring-neutral-200 focus-within:ring-neutral-400 dark:bg-neutral-900 dark:ring-neutral-800">
-            <Icon name="search" className="h-4 w-4 shrink-0 text-neutral-400" />
-            <input name="q" defaultValue={q} placeholder="Search mail" className="w-full bg-transparent text-sm outline-none placeholder:text-neutral-400" />
-          </label>
-        </form>
+        <h2 className="hidden min-w-0 max-w-[30%] truncate text-[15px] font-semibold sm:block md:text-base">{title}</h2>
+        <div className="mx-auto w-full max-w-xl"><SearchBox initial={q} /></div>
         <SyncStatus />
       </header>
       {!open && (accounts.length > 1 || clients.length > 0) && (
-        <div className="flex gap-2 overflow-x-auto border-b border-neutral-200/70 px-3 py-2 no-scrollbar dark:border-neutral-800 md:hidden">
-          <Link href={qs({ account: undefined, client: undefined, thread: undefined })} className={`shrink-0 rounded-full px-3 py-1 text-sm ${!account && !client ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900" : "bg-white ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-800"}`}>All</Link>
+        <div className="flex gap-2 overflow-x-auto border-b border-[var(--border)] px-3 py-2 no-scrollbar md:hidden">
+          <Link href={qs({ account: undefined, client: undefined, provider: undefined, thread: undefined })} className={`chip !px-3 !py-1 !text-[13px] ${!account && !client && !provider ? "bg-[var(--text)] text-[var(--bg)]" : "bg-[var(--surface)] ring-1 ring-[var(--border)]"}`}>All</Link>
+          {[...new Set(accounts.map((a) => a.provider))].map((p) => (
+            <Link key={p} href={qs({ provider: p, account: undefined, client: undefined, thread: undefined })} className="chip !px-3 !py-1 !text-[13px]" style={provider === p ? { background: channel(p).color, color: "white" } : { background: channel(p).soft, color: channel(p).color }}>{channel(p).name}</Link>
+          ))}
           {accounts.map((a) => (
-            <Link key={a.id} href={qs({ account: a.id, client: undefined, thread: undefined })} className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-sm ${account === a.id ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900" : "bg-white ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-800"}`}>
-              <span className={`h-1.5 w-1.5 rounded-full ${statusDot[a.status] ?? "bg-neutral-400"}`} />{a.display_name.split("@")[0]}{perAcct[a.id] ? ` · ${perAcct[a.id]}` : ""}
+            <Link key={a.id} href={qs({ account: a.id, client: undefined, provider: undefined, thread: undefined })} className={`chip !px-3 !py-1 !text-[13px] ${account === a.id ? "bg-[var(--text)] text-[var(--bg)]" : "bg-[var(--surface)] ring-1 ring-[var(--border)]"}`}>
+              {shortName(accountName(a))}{perAcct[a.id] ? ` · ${perAcct[a.id]}` : ""}
             </Link>
           ))}
           {clients.map((c) => (
-            <Link key={c.id} href={qs({ account: undefined, client: c.id, thread: undefined })} className={`shrink-0 rounded-full px-3 py-1 text-sm ${client === c.id ? "bg-violet-600 text-white" : "bg-violet-50 text-violet-800 dark:bg-violet-950 dark:text-violet-200"}`}>{c.name}</Link>
+            <Link key={c.id} href={qs({ account: undefined, client: c.id, provider: undefined, thread: undefined })} className={`chip !px-3 !py-1 !text-[13px] ${client === c.id ? "bg-violet-600 text-white" : "bg-violet-500/12 text-violet-700 dark:text-violet-300"}`}>{c.name}</Link>
           ))}
         </div>
       )}
       {accounts.some((a) => a.status !== "connected") && !open && (
-        <Link href="/settings" className="mx-3 mt-2 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900 ring-1 ring-amber-200 dark:bg-amber-950/50 dark:text-amber-200 dark:ring-amber-900 md:mx-4">
-          Some inboxes need attention. Open Accounts &amp; settings to reconnect.
+        <Link href="/settings" className="mx-3 mt-2 flex items-center gap-2 rounded-xl bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-800 ring-1 ring-amber-500/25 dark:text-amber-200 md:mx-4">
+          <span className="h-2 w-2 rounded-full bg-amber-500" /> Some inboxes need attention. Open Settings to reconnect.
         </Link>
       )}
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 lg:pt-2">
         {list}
         {reader}
       </div>

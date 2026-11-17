@@ -1,14 +1,93 @@
 @import "tailwindcss";
 
-@custom-variant dark (&:where(.dark, .dark *), @media (prefers-color-scheme: dark));
+/* Theme: "dark" class on <html> (set before paint from the saved choice: light / dark / system). */
+@custom-variant dark (&:where(.dark, .dark *));
 
-:root { color-scheme: light dark; }
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+:root {
+  color-scheme: light;
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #f0f1f4;
+  --surface-3: #e7e9ee;
+  --border: #e4e6eb;
+  --border-strong: #d3d6de;
+  --text: #0f1729;
+  --muted: #64708a;
+  --accent: #4f46e5;
+  --accent-2: #7c3aed;
+  --accent-soft: #eef0ff;
+  --accent-text: #4338ca;
+  --unread: #4f46e5;
+  --shadow: 0 1px 2px rgb(16 24 40 / 0.04), 0 1px 3px rgb(16 24 40 / 0.06);
+  --shadow-lg: 0 12px 32px -8px rgb(16 24 40 / 0.18);
+}
+.dark {
+  color-scheme: dark;
+  --bg: #0b0d12;
+  --surface: #12151c;
+  --surface-2: #181c25;
+  --surface-3: #212633;
+  --border: #232836;
+  --border-strong: #2f3647;
+  --text: #e8ebf2;
+  --muted: #8b94a8;
+  --accent: #6366f1;
+  --accent-2: #8b5cf6;
+  --accent-soft: rgb(99 102 241 / 0.14);
+  --accent-text: #a5b4fc;
+  --unread: #818cf8;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 16px 40px -8px rgb(0 0 0 / 0.6);
+}
+
 html, body { height: 100%; }
 body {
-  @apply bg-neutral-100 text-neutral-900 antialiased dark:bg-neutral-950 dark:text-neutral-100;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
   font-feature-settings: "cv11", "ss01";
 }
-/* thin, unobtrusive scrollbars */
-* { scrollbar-width: thin; scrollbar-color: rgb(163 163 163 / 0.4) transparent; }
+/* native controls follow the theme (fixes unreadable <select> options in dark mode) */
+select, option { background-color: var(--surface); color: var(--text); }
+
+* { scrollbar-width: thin; scrollbar-color: rgb(139 148 168 / 0.35) transparent; }
 .no-scrollbar { scrollbar-width: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* shared building blocks */
+@utility card { background: var(--surface); border: 1px solid var(--border); border-radius: 1rem; box-shadow: var(--shadow); }
+@utility btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: .4rem; border-radius: .7rem;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  padding: .5rem .85rem; font-size: .875rem; font-weight: 500; transition: background .15s, border-color .15s, box-shadow .15s;
+  &:hover { background: var(--surface-2); border-color: var(--border-strong); }
+  &:disabled { opacity: .55; cursor: not-allowed; }
+}
+@utility btn-primary {
+  display: inline-flex; align-items: center; justify-content: center; gap: .4rem; border-radius: .7rem;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: white;
+  padding: .55rem 1rem; font-size: .875rem; font-weight: 600; box-shadow: 0 6px 16px -6px rgb(79 70 229 / .55); transition: filter .15s, opacity .15s;
+  &:hover { filter: brightness(1.08); }
+  &:disabled { opacity: .55; cursor: not-allowed; }
+}
+@utility field {
+  width: 100%; border-radius: .7rem; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  padding: .55rem .8rem; font-size: .875rem; outline: none; transition: border-color .15s, box-shadow .15s;
+  &::placeholder { color: var(--muted); }
+  &:focus { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+}
+@utility chip {
+  display: inline-flex; align-items: center; gap: .3rem; border-radius: 999px; padding: .1rem .55rem;
+  font-size: 11px; font-weight: 600; line-height: 1.4; white-space: nowrap;
+}
+@utility muted { color: var(--muted); }
+
+/* top navigation progress bar */
+@keyframes ub-progress { 0% { transform: translateX(-100%); } 60% { transform: translateX(-20%); } 100% { transform: translateX(-5%); } }
+.ub-progress { animation: ub-progress 2.5s cubic-bezier(.1,.7,.2,1) forwards; }
+@keyframes ub-shimmer { 0% { background-position: -400px 0; } 100% { background-position: 400px 0; } }
+.skeleton { background: linear-gradient(90deg, var(--surface-2) 0, var(--surface-3) 40px, var(--surface-2) 80px); background-size: 800px 100%; animation: ub-shimmer 1.3s linear infinite; border-radius: .5rem; }
