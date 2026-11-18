@@ -52,6 +52,13 @@ export async function applyThreadAction(userId: string, ids: string[], action: T
       } catch { skipped++; }
     }
   }
+  // Mirror read/unread to Slack (moves your read position there) when the connection allows it.
+  if (action === "read" || action === "unread") {
+    const { slackMark } = await import("./slack");
+    for (const r of rows.filter((x) => x.accounts?.provider === "slack")) {
+      if (await slackMark(r.account_id, r.external_id, action === "read").catch(() => false)) mirrored++; else skipped++;
+    }
+  }
   if (action !== "read") await db.from("audit_log").insert({ user_id: userId, actor: opts.actor ?? "user", action: `thread.${action}`, target: `${rows.length} conversation(s)`, meta: { mirrored, skipped } });
-  return { ok: true, count: rows.length, mirrored, note: skipped ? "Changed in Unified Box. To also change it in Gmail, reconnect Gmail with “read + send” access." : undefined };
+  return { ok: true, count: rows.length, mirrored, note: skipped ? "Changed in Unified Box. To also change it in Gmail or Slack, reconnect that account in Settings (Upgrade access)." : undefined };
 }

@@ -20,7 +20,11 @@
         "mpim:history",
         "mpim:read",
         "users:read",
-        "team:read"
+        "team:read",
+        "channels:write",
+        "groups:write",
+        "im:write",
+        "mpim:write"
       ]
     }
   },

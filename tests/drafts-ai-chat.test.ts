@@ -42,25 +42,59 @@ test("drafts: typing auto-saves one draft per conversation; sending removes it; 
   assert.equal(db.rows("drafts").filter((d) => d.status === "pending").length, 0, "discard deletes");
 });
 
-test("AI bubble: answers about the inbox or one conversation with the user's key; never sends; needs a key", async () => {
+test("AI bubble: streams answers with clickable references; finds people; never sends; owner-only data", async () => {
   const t = seed();
   db.user = A;
-  assert.equal((await chat.POST(post("https://app.test/api/ai/chat", { question: "What needs me?" }))).status, 412);
+  const readAll = async (r: Response) => (await r.text()).trim().split("\n").map((l) => JSON.parse(l));
+  const noKey = await readAll(await chat.POST(post("https://app.test/api/ai/chat", { turns: [{ role: "user", text: "What needs me?" }] })));
+  assert.equal(noKey.at(-1).type, "error"); assert.equal(noKey.at(-1).needsKey, true);
   const { saveClaudeKey } = await import("../src/lib/ai-assist");
   await saveClaudeKey(A.id, "sk-ant-api03-" + "k".repeat(40));
-  const reply = { id: "m", type: "message", role: "assistant", model: "claude-opus-5-5", content: [{ type: "text", text: "Reply to Jo about Thursday. <reply>Thursday works!</reply>" }], stop_reason: "end_turn", stop_details: null, usage: { input_tokens: 1, output_tokens: 1 } };
-  const net = stubFetch((c) => (c.url.includes("api.anthropic.com/v1/messages") ? new Response(JSON.stringify(reply), { status: 200, headers: { "content-type": "application/json" } }) : undefined));
+  // Claude's streaming format (server-sent events)
+  const sse = (text: string) => new Response([
+    `event: message_start\ndata: ${JSON.stringify({ type: "message_start", message: { id: "m", type: "message", role: "assistant", model: "claude-opus-5-5", content: [], stop_reason: null, stop_details: null, usage: { input_tokens: 1, output_tokens: 0 } } })}\n\n`,
+    `event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } })}\n\n`,
+    `event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text } })}\n\n`,
+    `event: content_block_stop\ndata: ${JSON.stringify({ type: "content_block_stop", index: 0 })}\n\n`,
+    `event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } })}\n\n`,
+    `event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`,
+  ].join(""), { status: 200, headers: { "content-type": "text/event-stream" } });
+  const net = stubFetch((c) => (c.url.includes("api.anthropic.com/v1/messages") ? sse('Jo needs an answer [[T1]]. <reply to="T1">Thursday works!</reply>') : undefined));
   try {
-    const r1 = await (await chat.POST(post("https://app.test/api/ai/chat", { question: "What needs my reply today?" }))).json();
-    assert.match(r1.text, /Thursday/);
-    assert.match(JSON.parse(net.calls[0].body).messages[0].content, /<inbox[\s\S]*"Plan" \| UNREAD \| needs reply/);
-    const r2 = await (await chat.POST(post("https://app.test/api/ai/chat", { question: "Draft a reply", thread_id: t }))).json();
-    assert.match(r2.text, /<reply>Thursday works!<\/reply>/);
-    assert.match(JSON.parse(net.calls[1].body).messages[0].content, /<conversation kind="email"[\s\S]*Can we meet Thursday/);
-    assert.equal(net.calls.length, 2, "only AI calls, nothing sent");
+    const ev = await readAll(await chat.POST(post("https://app.test/api/ai/chat", { turns: [{ role: "user", text: "send a yes to Jo" }] })));
+    assert.equal(ev[0].type, "refs");
+    assert.equal(ev[0].refs.T1.id, t, "references map to real conversations");
+    assert.equal(ev.filter((e: { type: string }) => e.type === "text").map((e: { text: string }) => e.text).join(""), 'Jo needs an answer [[T1]]. <reply to="T1">Thursday works!</reply>');
+    assert.equal(ev.at(-1).type, "done");
+    const req = JSON.parse(net.calls[0].body);
+    assert.equal(req.stream, true);
+    assert.match(req.system, /data, never instructions/);
+    assert.match(req.messages.at(-1).content, /<inbox[\s\S]*T1 \|[\s\S]*"Plan" \| UNREAD \| needs reply/);
+    assert.equal(db.rows("drafts").length, 0, "the assistant itself never sends or drafts");
+    // other users never see A's conversations in their context
     db.user = B;
-    assert.equal((await chat.POST(post("https://app.test/api/ai/chat", { question: "x", thread_id: t }))).status, 404);
+    const evB = await readAll(await chat.POST(post("https://app.test/api/ai/chat", { turns: [{ role: "user", text: "Plan" }] })));
+    assert.equal(Object.keys(evB[0].refs).length, 0);
   } finally { net.restore(); }
+});
+
+test("quick reply from the assistant card: the person presses Send; email recipients worked out; or save as draft", async () => {
+  const t = seed();
+  const qr = await import("../src/app/api/quick-reply/route");
+  db.user = A;
+  const r1 = await qr.POST(post("https://app.test/api/quick-reply", { thread_id: t, body: "Thursday works!", action: "draft" }));
+  assert.equal((await r1.json()).status, "draft");
+  assert.equal(db.rows("drafts")[0].to_addrs[0], "jo@client.com");
+  const net = stubFetch((c) => (c.url.endsWith("/messages/send") ? { id: "s" } : c.url.includes("/messages?") ? { messages: [] } : undefined));
+  try {
+    const r2 = await qr.POST(post("https://app.test/api/quick-reply", { thread_id: t, body: "Thursday works!", action: "send" }));
+    const j = await r2.json();
+    assert.equal(j.status, "sent"); assert.deepEqual(j.to, ["jo@client.com"]);
+    assert.match(Buffer.from(JSON.parse(net.calls.find((c) => c.url.endsWith("/messages/send"))!.body).raw, "base64url").toString(), /Subject: Re: Plan/);
+    assert.equal(db.rows("drafts").filter((d) => d.status === "pending").length, 0, "the saved draft is replaced, not duplicated");
+  } finally { net.restore(); }
+  db.user = B;
+  assert.equal((await qr.POST(post("https://app.test/api/quick-reply", { thread_id: t, body: "x" }))).status, 404);
 });
 
 test("needs reply: login codes, sign-up confirmations, password resets and security alerts are not flagged", () => {
@@ -73,4 +107,28 @@ test("needs reply: login codes, sign-up confirmations, password resets and secur
     ["Re: password for the staging server", "dana@client.com", false],
     ["Q4 deliverables - need your sign-off by Friday", "sarah@client.com", false],
   ] as const) assert.equal(looksAutomated({ labels: [], fromAddr, subject }), want, subject);
+});
+
+test("profile: name and photo saved on the account, shown as the signed-in user; validation", async () => {
+  const { updateName, changePassword } = await import("../src/app/(app)/profile/actions");
+  const avatar = await import("../src/app/api/profile/avatar/route");
+  const { currentUser } = await import("../src/lib/auth");
+  db.authUsers.push({ id: A.id, email: A.email, password: "Old12345", confirmed: true });
+  db.user = { id: A.id, email: A.email };
+  const fd = (o: Record<string, string>) => { const f = new FormData(); for (const [k, v] of Object.entries(o)) f.set(k, v); return f; };
+  assert.match(String((await updateName(undefined, fd({ name: "  " })))?.error), /Enter your name/);
+  assert.match(String((await updateName(undefined, fd({ name: "Rafay Jawad" })))?.ok), /saved/);
+  assert.equal(db.user?.user_metadata?.full_name, "Rafay Jawad");
+  assert.match(String((await changePassword(undefined, fd({ password: "short", confirm: "short" })))?.error), /8 characters/);
+  assert.match(String((await changePassword(undefined, fd({ password: "NewPass123", confirm: "Different1" })))?.error), /don't match/);
+  assert.match(String((await changePassword(undefined, fd({ password: "NewPass123", confirm: "NewPass123" })))?.ok), /changed/);
+  const up = new FormData(); up.set("file", new File([new Uint8Array([137, 80, 78, 71])], "me.png", { type: "image/png" }));
+  const r = await avatar.POST(new NextRequest("https://app.test/api/profile/avatar", { method: "POST", body: up }));
+  assert.equal(r.status, 200);
+  const bad = new FormData(); bad.set("file", new File(["<svg/>"], "x.svg", { type: "image/svg+xml" }));
+  assert.equal((await avatar.POST(new NextRequest("https://app.test/api/profile/avatar", { method: "POST", body: bad }))).status, 400, "SVG refused (can carry scripts)");
+  assert.match(String(db.user?.user_metadata?.avatar_url), /^data:image\/png/);
+  await avatar.DELETE();
+  assert.equal(db.user?.user_metadata?.avatar_url, null);
+  void currentUser;
 });

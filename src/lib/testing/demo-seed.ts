@@ -53,6 +53,12 @@ export function seedDemo(db: FakeDb) {
   db.rows("client_rules").push({ id: "r1", user_id: u, client_id: "c1", kind: "domain", pattern: "greenbridge.io" }, { id: "r2", user_id: u, client_id: "c2", kind: "email", pattern: "daniel.okafor@acme-agency.com" });
   for (const [t, c] of [["t2", "c1"], ["t7", "c1"], ["t5", "c2"]]) db.rows("threads").find((x) => x.id === t)!.client_id = c;
   db.rows("accounts").push({ id: "a4", user_id: u, provider: "slack", account_type: "company", display_name: "Greenbridge Workspace", external_id: "T1:U1", status: "connected", can_send: true, last_synced_at: ago(8) });
+  db.rows("threads").push({ id: "t12", user_id: u, account_id: "a4", external_id: "D777", subject: "DM · Abdul Hadi", snippet: "hello", last_message_at: ago(15), unread: false, needs_reply: false, last_from: "You" });
+  db.rows("messages").push(
+    { id: "m-t12-1", user_id: u, account_id: "a4", thread_id: "t12", external_id: "D777:1700000001.0001", from_addr: "U9", from_name: "Abdul Hadi", to_addrs: [], subject: "DM", body_text: "hey, are you around?", sent_at: ago(40), is_outgoing: false },
+    { id: "m-t12-2", user_id: u, account_id: "a4", thread_id: "t12", external_id: "D777:1700000002.0001", from_addr: "U9", from_name: "Abdul Hadi", to_addrs: [], subject: "DM", body_text: "need the deploy link", sent_at: ago(39), is_outgoing: false },
+    { id: "m-t12-3", user_id: u, account_id: "a4", thread_id: "t12", external_id: "D777:1700000003.0001", from_addr: "U1", from_name: "You", to_addrs: [], subject: "DM", body_text: "hello", sent_at: ago(15), is_outgoing: true },
+  );
   db.rows("threads").push({ id: "t11", user_id: u, account_id: "a4", external_id: "C123", subject: "#client-greenbridge", snippet: "Deploy looks good, ship it?", last_message_at: ago(20), unread: true, needs_reply: true, last_from: "Dana", client_id: "c1", starred: true });
   db.rows("messages").push({ id: "m-t11-1", user_id: u, account_id: "a4", thread_id: "t11", external_id: "C123:1", from_addr: "U2", from_name: "Dana", to_addrs: [], subject: "#client-greenbridge", body_text: "Deploy looks good, ship it? @Rafay", sent_at: ago(20), is_outgoing: false });
   // Chat apps: one WhatsApp Business number and one Telegram account, each with a conversation.
@@ -95,6 +101,19 @@ export function installDemoNetwork() {
     if (url === "https://api.openai.com/v1/models") return ok({ data: [{ id: "gpt-5" }, { id: "gpt-5-mini" }] });
     if (url === "https://api.openai.com/v1/chat/completions") return ok({ choices: [{ message: { content: "Hi Sarah, Thursday works for the review. Thanks!" }, finish_reason: "stop" }] });
     if (url.startsWith("https://api.anthropic.com/v1/models")) return ok({ data: [{ id: "claude-opus-5-5", type: "model" }], has_more: false, first_id: "a", last_id: "a" });
+    if (url.startsWith("https://api.anthropic.com/v1/messages") && JSON.parse(String(init?.body ?? "{}")).stream) {
+      const req = JSON.parse(String(init?.body ?? "{}"));
+      const last = String(req.messages?.at(-1)?.content ?? "");
+      const ref = (re: RegExp) => (last.match(re) ?? [])[1] ?? "T1";
+      const text = /hadi|slack/i.test(last.split("</inbox>").pop() ?? "")
+        ? `Found your Slack chat [[${ref(/(T\d+) \|[^\n]*slack/)}]]. Here's a message:\n<reply to="${ref(/(T\d+) \|[^\n]*slack/)}">Hello Hadi! 👋</reply>`
+        : `**2 things need you today:**\n- Sarah Mitchell needs sign-off by Friday [[${ref(/(T\d+) \|[^\n]*Q4 deliverables/)}]]\n- Invoice #1042 is overdue [[${ref(/(T\d+) \|[^\n]*Invoice #1042/)}]]\n<reply to="${ref(/(T\d+) \|[^\n]*Q4 deliverables/)}">Hi Sarah, the mockups will be ready Thursday. Thanks!</reply>`;
+      const ev = (type: string, data: object) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
+      const chunks = [ev("message_start", { message: { id: "m", type: "message", role: "assistant", model: "claude-opus-5-5", content: [], stop_reason: null, stop_details: null, usage: { input_tokens: 1, output_tokens: 0 } } }), ev("content_block_start", { index: 0, content_block: { type: "text", text: "" } })];
+      for (let i = 0; i < text.length; i += 12) chunks.push(ev("content_block_delta", { index: 0, delta: { type: "text_delta", text: text.slice(i, i + 12) } }));
+      chunks.push(ev("content_block_stop", { index: 0 }), ev("message_delta", { delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } }), ev("message_stop", {}));
+      return new Response(chunks.join(""), { status: 200, headers: { "content-type": "text/event-stream" } });
+    }
     if (url.startsWith("https://api.anthropic.com/v1/messages")) {
       const ask = String(JSON.parse(String(init?.body ?? "{}")).messages?.[0]?.content ?? "");
       const text = /Draft a reply[\s\S]*<reply>/.test(ask) ? "Here's a reply you can send:\n<reply>Hi Sarah, the mockups will be ready Thursday. Thanks!</reply>"

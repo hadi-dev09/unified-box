@@ -10,12 +10,12 @@ import { accountName, channel, ChannelAvatar, Icon, ProviderIcon, statusDot, sta
 type Props = {
   accounts: SummaryAccount[]; clients: { id: string; name: string }[];
   perAcct: Record<string, number>; perClient: Record<string, number>; perProvider: Record<string, number>;
-  unreadTotal: number; pending: number; email: string;
+  unreadTotal: number; pending: number; email: string; name?: string; avatarUrl?: string | null;
 };
 
 const ORDER = ["gmail", "outlook", "slack", "whatsapp", "telegram"];
 
-export function SidebarNav({ accounts, clients, perAcct, perClient, perProvider, unreadTotal, pending, email }: Props) {
+export function SidebarNav({ accounts, clients, perAcct, perClient, perProvider, unreadTotal, pending, email, name = "", avatarUrl = null }: Props) {
   const path = usePathname();
   const sp = useSearchParams();
   const onInbox = path === "/";
@@ -101,6 +101,15 @@ export function SidebarNav({ accounts, clients, perAcct, perClient, perProvider,
             <button className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs muted hover:bg-[var(--surface-2)] hover:text-[var(--text)]" title={`Sign out ${email}`}><Icon name="logout" className="h-3.5 w-3.5" /> Sign out</button>
           </form>
         </div>
+        <Link href="/profile" title="Your profile" className={`mt-1 flex items-center gap-2.5 rounded-xl px-2 py-2 transition ${path.startsWith("/profile") ? "bg-[var(--accent-soft)]" : "hover:bg-[var(--surface-2)]"}`}>
+          {avatarUrl
+            ? <img src={avatarUrl} alt="" className="h-8 w-8 shrink-0 rounded-full object-cover ring-1 ring-[var(--border)]" />
+            : <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)] text-xs font-bold text-white">{(name || email).split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?"}</span>}
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[13px] font-semibold">{name || email.split("@")[0]}</span>
+            <span className="block truncate text-[11px] muted">{email}</span>
+          </span>
+        </Link>
       </nav>
     </div>
   );

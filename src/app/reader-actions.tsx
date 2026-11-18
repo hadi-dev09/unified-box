@@ -1,6 +1,6 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { Icon, type IconName } from "./ui";
 
 /** Actions for the open conversation: star, mark unread, snooze, delete. */
@@ -42,4 +42,15 @@ export function ScrollToDraft({ id }: { id: string }) {
     while (p && !/(auto|scroll)/.test(getComputedStyle(p).overflowY)) p = p.parentElement;
     if (el && p) p.scrollTo({ top: p.scrollTop + el.getBoundingClientRect().top - p.getBoundingClientRect().top - 80, behavior: "smooth" }); }, [id]);
   return null;
+}
+
+/** Chats open at the newest message (bottom), like a messaging app. */
+export function ScrollToBottom() {
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    let p = ref.current?.parentElement ?? null;
+    while (p && !/(auto|scroll)/.test(getComputedStyle(p).overflowY)) p = p.parentElement;
+    if (p) p.scrollTop = p.scrollHeight;
+  }, []);
+  return <span ref={ref} aria-hidden />;
 }

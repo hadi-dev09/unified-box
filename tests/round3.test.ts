@@ -42,7 +42,7 @@ test("thread actions: read/unread/star/snooze/trash in the app; own threads only
     assert.equal(r.status, 200);
     const j = await r.json();
     assert.equal(j.count, 2, "other users' threads are untouched");
-    assert.match(j.note, /reconnect Gmail/i);
+    assert.match(j.note, /reconnect that account/i);
     assert.equal(db.rows("threads").find((x) => x.id === theirs)!.unread, true);
     assert.equal(net.calls.length, 0);
     await act([t1], "star");

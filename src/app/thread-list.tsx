@@ -94,6 +94,7 @@ export function ThreadList({ threads, activeId, hrefFor, showChannel, view }: {
           return (
             <li key={t.id} className="group/row relative">
               <Link href={hrefFor[t.id]} aria-current={active ? "true" : undefined} prefetch={false}
+                onMouseEnter={() => router.prefetch(hrefFor[t.id])} onTouchStart={() => router.prefetch(hrefFor[t.id])}
                 onClick={() => t.unread && setOverride((o) => ({ ...o, [t.id]: { ...o[t.id], unread: false } }))}
                 className={`relative flex items-start gap-3 rounded-2xl py-3 pl-11 pr-3 transition ${
                   active ? "bg-[var(--surface)] shadow-[var(--shadow)] ring-1 ring-[var(--accent)]/50"

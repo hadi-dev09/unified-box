@@ -11,8 +11,9 @@ import { DraftActions } from "./approvals/draft-actions";
 import { LocalTime } from "../local-time";
 import { MarkSeen } from "../mark-seen";
 import { MessageBody } from "../message-body";
-import { ReaderActions, ScrollToDraft } from "../reader-actions";
+import { ReaderActions, ScrollToBottom, ScrollToDraft } from "../reader-actions";
 import { SearchBox } from "../search-box";
+import { PaneResizer } from "../pane-resizer";
 import { ScheduledCard } from "../schedule-button";
 import { MenuButton, SyncStatus } from "../shell";
 import { ThreadList, type ListThread } from "../thread-list";
@@ -133,7 +134,26 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 md:px-6">
           <div className="mx-auto max-w-3xl space-y-3">
             {messages.length > 1 && <AiSummary threadId={cur.id} hasKey={hasAiKey} />}
-            {messages.map((m, i) => {
+            {isChat && messages.map((m, i) => {
+              const prev = messages[i - 1];
+              const sameAuthor = prev && prev.is_outgoing === m.is_outgoing && (prev.from_name ?? prev.from_addr) === (m.from_name ?? m.from_addr) && new Date(m.sent_at).getTime() - new Date(prev.sent_at).getTime() < 5 * 60_000;
+              const newDay = !prev || new Date(prev.sent_at).toDateString() !== new Date(m.sent_at).toDateString();
+              return (
+                <div key={m.id}>
+                  {newDay && <p className="my-3 text-center text-[11px] font-semibold uppercase tracking-wider muted"><LocalTime iso={m.sent_at} mode="day" /></p>}
+                  <div className={`flex items-end gap-2 ${m.is_outgoing ? "flex-row-reverse" : ""} ${sameAuthor ? "-mt-1.5" : ""}`}>
+                    <span className={sameAuthor ? "invisible" : ""}><Avatar name={m.from_name || m.from_addr || "?"} you={m.is_outgoing} size="sm" /></span>
+                    <div className={`max-w-[80%] rounded-2xl px-3.5 py-2 ${m.is_outgoing ? "rounded-br-md bg-[var(--accent)] text-white" : "rounded-bl-md bg-[var(--surface-2)]"}`}>
+                      {!sameAuthor && !m.is_outgoing && <p className="mb-0.5 text-xs font-semibold">{m.from_name || m.from_addr}</p>}
+                      <div className={`text-sm leading-relaxed ${m.is_outgoing ? "[&_a]:text-white [&_a]:underline" : ""}`}>{m.body_text?.trim() ? <MessageBody text={m.body_text} /> : <span className="italic opacity-70">Attachment</span>}</div>
+                      <p className={`mt-0.5 text-right text-[10px] ${m.is_outgoing ? "text-white/70" : "muted"}`}><LocalTime iso={m.sent_at} /></p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {isChat && <ScrollToBottom key={messages.length} />}
+            {!isChat && messages.map((m, i) => {
               const name = m.is_outgoing ? "You" : m.from_name || m.from_addr || "Unknown";
               const head = (
                 <div className="flex items-start gap-3">
@@ -204,7 +224,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   const emptyText = q ? `Nothing matches “${q}”.` : view === "trash" ? "Trash is empty." : view === "snoozed" ? "Nothing snoozed." : view === "starred" ? "Star important conversations to find them here." : accounts.length ? "New messages appear here automatically." : "Connect an inbox to get started.";
 
   const list = (
-    <section aria-label="Conversations" className={`${open ? "hidden lg:flex lg:w-[400px] lg:shrink-0 xl:w-[440px]" : "flex flex-1"} min-h-0 min-w-0 flex-col`}>
+    <section id="conv-list" aria-label="Conversations" className={`${open ? "hidden lg:flex lg:w-[400px] lg:shrink-0 xl:w-[440px]" : "flex flex-1"} min-h-0 min-w-0 flex-col`}>
       <div className="flex items-center gap-1 overflow-x-auto px-3 py-2.5 no-scrollbar md:px-4">
         {tab("all", "All")}{tab("unread", "Unread", unreadTotal)}{tab("reply", "Needs reply", replyTotal)}{tab("starred", "Starred")}{tab("snoozed", "Snoozed")}{tab("trash", "Trash")}
       </div>
@@ -256,6 +276,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
       )}
       <div className="flex min-h-0 flex-1 lg:pt-2">
         {list}
+        {open && <PaneResizer targetId="conv-list" />}
         {reader}
       </div>
     </>

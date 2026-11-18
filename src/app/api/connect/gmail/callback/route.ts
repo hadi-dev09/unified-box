@@ -27,12 +27,16 @@ export async function GET(req: NextRequest) {
       const who = idTokenClaims(t.id_token);
       if (!who.emailVerified) return toLogin("Your Google email isn't verified.");
       const admin = supabaseAdmin();
-      await admin.auth.admin.createUser({ email: who.email, email_confirm: true, user_metadata: { full_name: who.name } }).catch(() => null); // exists already: fine
+      await admin.auth.admin.createUser({ email: who.email, email_confirm: true, user_metadata: { full_name: who.name, ...(who.picture ? { avatar_url: who.picture } : {}) } }).catch(() => null); // exists already: fine
       const { data: link, error: linkErr } = await admin.auth.admin.generateLink({ type: "magiclink", email: who.email });
       if (linkErr || !link?.properties?.hashed_token) throw new Error(linkErr?.message ?? "could not start session");
       const { data: session, error: vErr } = await sb.auth.verifyOtp({ type: "magiclink", token_hash: link.properties.hashed_token });
       const uid = session?.user?.id;
       if (vErr || !uid) throw new Error(vErr?.message ?? "could not start session");
+      // Fill in name/photo from Google only where the profile has none yet.
+      const meta = (session?.user?.user_metadata ?? {}) as { full_name?: string; avatar_url?: string };
+      const fill = { ...(!meta.full_name && who.name ? { full_name: who.name } : {}), ...(!meta.avatar_url && who.picture ? { avatar_url: who.picture } : {}) };
+      if (Object.keys(fill).length) { await sb.auth.updateUser({ data: fill }).catch(() => null); await sb.auth.refreshSession().catch(() => null); }
       const { data: acct, error } = await admin.from("accounts").upsert(
         { user_id: uid, provider: "gmail", account_type: "personal", display_name: who.email, external_id: who.email, status: "connected", status_detail: null, can_send: t.scope.includes(SEND_SCOPE) },
         { onConflict: "user_id,provider,external_id" },

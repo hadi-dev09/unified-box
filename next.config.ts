@@ -3,6 +3,8 @@ import type { NextConfig } from "next";
 const config: NextConfig = {
   // Telegram's MTProto client uses Node sockets and dynamic requires; keep it out of the bundle.
   serverExternalPackages: ["telegram"],
+  // Keep recently visited inbox pages for 30s on the client, so going back and forth is instant.
+  experimental: { staleTimes: { dynamic: 30, static: 180 } },
   async headers() {
     return [
       {

@@ -42,10 +42,10 @@ export async function exchangeCode(code: string): Promise<Tokens & { id_token: s
 }
 
 /** Identity claims from the id_token we just received directly from Google over TLS (token endpoint + client secret). */
-export function idTokenClaims(idToken: string): { email: string; emailVerified: boolean; name: string } {
+export function idTokenClaims(idToken: string): { email: string; emailVerified: boolean; name: string; picture: string | null } {
   const p = JSON.parse(Buffer.from(idToken.split(".")[1], "base64url").toString());
   if (!p.email) throw new Error("No email in id_token");
-  return { email: String(p.email).toLowerCase(), emailVerified: p.email_verified === true || p.email_verified === "true", name: String(p.name ?? "") };
+  return { email: String(p.email).toLowerCase(), emailVerified: p.email_verified === true || p.email_verified === "true", name: String(p.name ?? ""), picture: typeof p.picture === "string" && p.picture.startsWith("https://") ? p.picture : null };
 }
 
 /** Decode the email from the id_token we just received directly from Google over TLS. */

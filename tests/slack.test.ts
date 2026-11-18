@@ -35,7 +35,8 @@ test("connect: replies are opt-in (?write=1 adds chat:write only), and the grant
   const r = await connect.GET(new NextRequest("https://app.test/api/connect/slack?write=1"));
   const scopes = new URL(r.headers.get("location")!).searchParams.get("user_scope")!.split(",");
   assert.ok(scopes.includes("chat:write"));
-  assert.ok(!scopes.some((s) => /admin|files:write|channels:write|groups:write|im:write/.test(s)), `${scopes}`);
+  assert.ok(!scopes.some((s) => /admin|files:write|chat:write:bot|channels:manage/.test(s)), `${scopes}`);
+  assert.ok(scopes.includes("im:write"), "read/unread sync needs conversations.mark");
   const cookie = r.headers.getSetCookie()[0].split(";")[0].split("=")[1];
   const nonce = JSON.parse(decodeURIComponent(cookie)).nonce;
   const net = stubFetch(slackApi({ "oauth.v2.access": () => ({ ok: true, team: { id: "T1", name: "Greenbridge" }, authed_user: { id: "U1", access_token: "xoxp-S", scope: "im:history,chat:write" } }) }));
@@ -216,4 +217,27 @@ test("disconnect: revokes the Slack token and removes the account (owner only)",
     assert.ok(net.calls.some((c) => c.url.endsWith("/auth.revoke")));
     assert.equal(db.rows("accounts").length, 0);
   } finally { net.restore(); }
+});
+
+test("slack read state: reading in Slack clears unread here; marking here moves the read position in Slack", async () => {
+  const { syncSlackReadState, slackMark } = await import("../src/lib/slack");
+  db.rows("accounts").push({ id: "s9", user_id: A.id, provider: "slack", display_name: "WS", external_id: "T1:U1", status: "connected", can_send: true });
+  db.rows("account_secrets").push({ account_id: "s9", tokens_enc: encrypt(JSON.stringify({ access_token: "xoxp-1", scope: "im:history,chat:write,im:write,channels:write" })) });
+  db.rows("threads").push({ id: "th9", user_id: A.id, account_id: "s9", external_id: "D9", subject: "DM", unread: true, last_from: "Dana", last_message_at: new Date().toISOString() });
+  db.rows("messages").push(
+    { id: "a", user_id: A.id, account_id: "s9", thread_id: "th9", external_id: "D9:1700000100.000100", is_outgoing: false, sent_at: new Date(Date.now() - 60_000).toISOString() },
+    { id: "b", user_id: A.id, account_id: "s9", thread_id: "th9", external_id: "D9:1700000200.000100", is_outgoing: false, sent_at: new Date().toISOString() },
+  );
+  let net = stubFetch((c) => (c.url.includes("conversations.info") ? { ok: true, channel: { id: "D9", last_read: "1700000200.000100" } } : undefined));
+  try { assert.equal((await syncSlackReadState("s9")).changed, 1); } finally { net.restore(); }
+  assert.equal(db.rows("threads")[0].unread, false, "read in Slack -> read here");
+  net = stubFetch((c) => (c.url.endsWith("conversations.mark") ? { ok: true } : undefined));
+  try {
+    assert.equal(await slackMark("s9", "D9", false), true);
+    assert.equal(JSON.parse(net.calls[0].body).ts, "1700000100.000100", "unread = back up to before the newest message");
+    assert.equal(await slackMark("s9", "D9", true), true);
+    assert.equal(JSON.parse(net.calls[1].body).ts, "1700000200.000100");
+  } finally { net.restore(); }
+  db.rows("account_secrets")[0].tokens_enc = encrypt(JSON.stringify({ access_token: "xoxp-1", scope: "im:history" }));
+  assert.equal(await slackMark("s9", "D9", true), false, "without write scopes it doesn't try");
 });

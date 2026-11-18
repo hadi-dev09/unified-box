@@ -33,7 +33,7 @@ const DEFAULTS: Record<string, () => Row> = {
   audit_log: () => ({ meta: {}, created_at: now() }),
 };
 
-const likeToRegex = (p: string) => new RegExp("^" + p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*") + "$", "i");
+const likeToRegex = (p: string, ci = true) => new RegExp("^" + p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*") + "$", ci ? "i" : "");
 const cmp = (a: any, b: any) => (a < b ? -1 : a > b ? 1 : 0); // eslint-disable-line @typescript-eslint/no-explicit-any
 
 function splitTop(s: string): string[] {
@@ -83,6 +83,7 @@ class Query implements PromiseLike<Result> {
   lte(c: string, v: any) { this.filters.push((r) => r[c] != null && cmp(r[c], v) <= 0); return this; } // eslint-disable-line @typescript-eslint/no-explicit-any
   not(c: string, op: string, v: any) { if (op === "is") this.filters.push((r) => (r[c] ?? null) !== v); else if (op === "in") { const set = String(v).replace(/^\(|\)$/g, "").split(","); this.filters.push((r) => !set.includes(String(r[c]))); } else this.filters.push((r) => r[c] !== v); return this; } // eslint-disable-line @typescript-eslint/no-explicit-any
   lt(c: string, v: any) { this.filters.push((r) => r[c] != null && cmp(r[c], v) < 0); return this; } // eslint-disable-line @typescript-eslint/no-explicit-any
+  like(c: string, p: string) { const re = likeToRegex(p, false); this.filters.push((r) => re.test(String(r[c] ?? ""))); return this; }
   ilike(c: string, p: string) { const re = likeToRegex(p); this.filters.push((r) => re.test(String(r[c] ?? ""))); return this; }
   or(expr: string) {
     const parts = splitTop(expr).map((e) => {
@@ -166,7 +167,7 @@ const authErr = (message: string) => ({ data: { user: null, session: null }, err
 
 export class FakeDb {
   tables: Record<string, Row[]> = {};
-  user: { id: string; email: string } | null = null;
+  user: { id: string; email: string; user_metadata?: Record<string, unknown>; app_metadata?: Record<string, unknown> } | null = null;
   authUsers: AuthUser[] = [];
   authLog: { method: string; args: any }[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
   rows(t: string): Row[] { return (this.tables[t] ??= []); }
@@ -176,7 +177,8 @@ export class FakeDb {
   private find(email: string) { return this.authUsers.find((u) => u.email === email.toLowerCase()); }
   auth = {
     getUser: async () => ({ data: { user: this.user }, error: null }),
-    getClaims: async () => ({ data: this.user ? { claims: { sub: this.user.id, email: this.user.email } } : null, error: null }),
+    getClaims: async () => ({ data: this.user ? { claims: { sub: this.user.id, email: this.user.email, user_metadata: this.user.user_metadata ?? {}, app_metadata: this.user.app_metadata ?? {} } } : null, error: null }),
+    refreshSession: async () => ({ data: {}, error: null }),
     exchangeCodeForSession: async (code: string) => { this.log("exchangeCodeForSession", code); return code === "bad" ? authErr("invalid flow state") : { data: {}, error: null }; },
     signInWithPassword: async (a: { email: string; password: string }) => {
       this.log("signInWithPassword", a);
@@ -211,11 +213,12 @@ export class FakeDb {
     },
     resend: async (a: unknown) => { this.log("resend", a); return { data: {}, error: null }; },
     resetPasswordForEmail: async (email: string, opts: unknown) => { this.log("resetPasswordForEmail", { email, opts }); return { data: {}, error: null }; },
-    updateUser: async (a: { password?: string }) => {
+    updateUser: async (a: { password?: string; data?: Record<string, unknown> }) => {
       this.log("updateUser", a);
       if (!this.user) return authErr("Auth session missing!");
       const u = this.find(this.user.email);
       if (u && a.password) u.password = a.password;
+      if (a.data) this.user = { ...this.user, user_metadata: { ...(this.user.user_metadata ?? {}), ...a.data } };
       return { data: { user: this.user }, error: null };
     },
     admin: {

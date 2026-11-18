@@ -26,7 +26,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <Shell
       initialCollapsed={collapsed}
-      sidebar={<Suspense><SidebarNav accounts={s.accounts} clients={s.clients} perAcct={s.perAcct} perClient={s.perClient} perProvider={s.perProvider} unreadTotal={s.unreadTotal} pending={s.pending} email={user.email ?? ""} /></Suspense>}
+      sidebar={<Suspense><SidebarNav accounts={s.accounts} clients={s.clients} perAcct={s.perAcct} perClient={s.perClient} perProvider={s.perProvider} unreadTotal={s.unreadTotal} pending={s.pending} email={user.email ?? ""} name={user.name} avatarUrl={user.avatarUrl} /></Suspense>}
       status={<LiveSync enabled={s.accounts.some((a) => a.status === "connected" || a.status === "error")} lastSyncedAt={s.lastSynced} unreadTotal={s.unreadTotal} />}
     >
       {children}

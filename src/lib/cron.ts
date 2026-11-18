@@ -31,6 +31,10 @@ export async function backgroundSync(budgetMs = 50_000) {
   const due = (data ?? [])
     .filter((a: { last_synced_at: string | null; provider: string }) => a.provider !== "whatsapp" && (!a.last_synced_at || Date.now() - new Date(a.last_synced_at).getTime() > dueAfterMs(a.provider)))
     .sort((a: { last_synced_at: string | null }, b: { last_synced_at: string | null }) => String(a.last_synced_at ?? "").localeCompare(String(b.last_synced_at ?? "")));
+  // Slack read state is cheap to check, so do it every minute (history polling is the slow part).
+  const slackIds = (data ?? []).filter((a: { provider: string }) => a.provider === "slack").map((a: { id: string }) => a.id);
+  const { syncSlackReadState } = await import("./slack");
+  await Promise.all(slackIds.map((id: string) => syncSlackReadState(id).catch(() => null)));
   let done = 0;
   await mapLimit(due, 5, async (a: { id: string }) => {
     if (Date.now() - start > budgetMs) return;

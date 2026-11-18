@@ -11,12 +11,14 @@ export const SLACK_USER_SCOPES = [
 ];
 
 export const SLACK_SEND_SCOPE = "chat:write";
+/** Needed only to move your read position (conversations.mark), so read/unread here shows in Slack too. */
+export const SLACK_MARK_SCOPES = ["channels:write", "groups:write", "im:write", "mpim:write"];
 export const slackConfigured = () => Boolean(process.env.SLACK_CLIENT_ID && process.env.SLACK_CLIENT_SECRET);
 
 export function slackAuthUrl(state: string, withSend = false) {
   const p = new URLSearchParams({
     client_id: env("SLACK_CLIENT_ID"),
-    user_scope: [...SLACK_USER_SCOPES, ...(withSend ? [SLACK_SEND_SCOPE] : [])].join(","),
+    user_scope: [...SLACK_USER_SCOPES, ...(withSend ? [SLACK_SEND_SCOPE, ...SLACK_MARK_SCOPES] : [])].join(","),
     redirect_uri: `${env("APP_URL")}/api/connect/slack/callback`,
     state,
   });
@@ -251,4 +253,65 @@ export async function ingestSlackEvent(acct: { id: string; user_id: string; exte
   }, { onConflict: "account_id,external_id" });
   await db.from("accounts").update({ last_synced_at: new Date().toISOString(), status: "connected", status_detail: null }).eq("id", acct.id);
   return true;
+}
+
+// ---------- read state, both directions ----------
+
+async function slackToken(accountId: string): Promise<{ token: string; scope: string } | null> {
+  const { data: sec } = await supabaseAdmin().from("account_secrets").select("tokens_enc").eq("account_id", accountId).maybeSingle();
+  if (!sec) return null;
+  const t = JSON.parse(decrypt(sec.tokens_enc)) as { access_token: string; scope?: string };
+  return { token: t.access_token, scope: t.scope ?? "" };
+}
+
+/**
+ * Slack → Unified Box: asks Slack where you have read up to in each recent conversation (conversations.info,
+ * not limited like message history) and updates unread here. Runs every minute in the background.
+ */
+export async function syncSlackReadState(accountId: string, maxConvs = 30) {
+  const db = supabaseAdmin();
+  const tk = await slackToken(accountId);
+  if (!tk) return { checked: 0, changed: 0 };
+  const { data: threads } = await db.from("threads").select("id, external_id, unread, last_from").eq("account_id", accountId).order("last_message_at", { ascending: false }).limit(maxConvs);
+  let checked = 0, changed = 0;
+  for (const t of (threads ?? []) as { id: string; external_id: string; unread: boolean; last_from: string | null }[]) {
+    let lastRead: string | undefined;
+    try {
+      const j = await call<{ channel: { last_read?: string } }>(tk.token, "conversations.info", { channel: t.external_id });
+      lastRead = j.channel.last_read;
+    } catch (e) {
+      if (e instanceof SlackRateLimited || e instanceof SlackNeedsReauth) break;
+      continue;
+    }
+    checked++;
+    if (!lastRead) continue;
+    const { data: newest } = await db.from("messages").select("external_id, is_outgoing").eq("thread_id", t.id).eq("is_outgoing", false).order("sent_at", { ascending: false }).limit(1).maybeSingle();
+    const newestTs = newest ? String(newest.external_id).split(":").pop() ?? "0" : "0";
+    const unread = t.last_from !== "You" && parseFloat(newestTs) > parseFloat(lastRead);
+    if (unread !== t.unread) { await db.from("threads").update({ unread, ...(unread ? {} : { seen_at: new Date().toISOString() }) }).eq("id", t.id); changed++; }
+  }
+  return { checked, changed };
+}
+
+/**
+ * Unified Box → Slack: moves your read position. Read = up to the newest message; unread = just before it
+ * (Slack then shows the conversation as unread). Needs the *:write user scopes; returns false if not granted.
+ */
+export async function slackMark(accountId: string, channel: string, read: boolean): Promise<boolean> {
+  const tk = await slackToken(accountId);
+  if (!tk) return false;
+  const granted = tk.scope.split(",");
+  if (!SLACK_MARK_SCOPES.some((s) => granted.includes(s))) return false;
+  const db = supabaseAdmin();
+  const { data: rows } = await db.from("messages").select("external_id").eq("account_id", accountId).like("external_id", `${channel}:%`).order("sent_at", { ascending: false }).limit(2);
+  const ts = (rows ?? []).map((r: { external_id: string }) => r.external_id.split(":").pop()!);
+  if (!ts.length) return false;
+  // Unread: back up to just before the newest message.
+  const target = read ? ts[0] : ts[1] ?? (parseFloat(ts[0]) - 0.000001).toFixed(6);
+  const r = await fetch("https://slack.com/api/conversations.mark", {
+    method: "POST", headers: { authorization: `Bearer ${tk.token}`, "content-type": "application/json; charset=utf-8" },
+    body: JSON.stringify({ channel, ts: target }),
+  });
+  const j = (await r.json().catch(() => ({}))) as { ok?: boolean };
+  return Boolean(j.ok);
 }
