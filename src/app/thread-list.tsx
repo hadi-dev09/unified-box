@@ -8,7 +8,7 @@ import { Avatar, ChannelTag, Icon, type IconName } from "./ui";
 export type ListThread = {
   id: string; subject: string | null; snippet: string | null; last_message_at: string; unread: boolean; needs_reply: boolean;
   last_from: string | null; starred: boolean; snoozed_until: string | null; trashed_at: string | null;
-  provider: string | null; accountLabel: string; client: string | null;
+  provider: string | null; accountLabel: string; client: string | null; hasDraft?: boolean;
 };
 
 const SNOOZE = [
@@ -65,7 +65,7 @@ export function ThreadList({ threads, activeId, hrefFor, showChannel, view }: {
   return (
     <div className="relative">
       {rows.length > 0 && (
-        <div className={`sticky top-0 z-10 mb-1 flex h-11 items-center gap-1 rounded-xl px-2 transition ${selected.length ? "bg-[var(--surface)] shadow-[var(--shadow)] ring-1 ring-[var(--border)]" : ""}`}>
+        <div className={`sticky top-0 z-10 mb-1 flex h-11 items-center gap-1 rounded-xl px-2 transition ${selected.length ? "bg-[var(--surface)] shadow-[var(--shadow)] ring-1 ring-[var(--border)]" : "bg-[var(--bg)]"}`}>
           <label className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg hover:bg-[var(--surface-2)]" title={allOn ? "Clear selection" : "Select all"}>
             <input type="checkbox" className="h-4 w-4 accent-[var(--accent)]" checked={allOn} ref={(el) => { if (el) el.indeterminate = selected.length > 0 && !allOn; }}
               onChange={() => setSel(allOn ? new Set() : new Set(rows.map((t) => t.id)))} aria-label="Select all conversations" />
@@ -111,10 +111,11 @@ export function ThreadList({ threads, activeId, hrefFor, showChannel, view }: {
                   </div>
                   {!isChat && <p className={`truncate text-sm ${t.unread ? "font-semibold" : "text-[var(--text)]/75"}`}>{t.subject || "(no subject)"}</p>}
                   <p className="truncate text-[13px] muted">{isChat && t.last_from === "You" ? "You: " : ""}{t.snippet}</p>
-                  {(showChannel || t.client || t.needs_reply || t.snoozed_until) && (
+                  {(showChannel || t.client || t.needs_reply || t.snoozed_until || t.hasDraft) && (
                     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                       {showChannel && <ChannelTag provider={t.provider} label={t.accountLabel} />}
                       {t.client && <span className="chip bg-violet-500/12 text-violet-700 dark:text-violet-300">{t.client}</span>}
+                      {t.hasDraft && <span className="chip bg-red-500/12 text-red-700 dark:text-red-300"><Icon name="pencil" className="h-3 w-3" />Draft</span>}
                       {t.needs_reply && <span className="chip bg-amber-500/15 text-amber-700 dark:text-amber-300">Needs reply</span>}
                       {t.snoozed_until && <span className="chip bg-sky-500/12 text-sky-700 dark:text-sky-300"><Icon name="clock" className="h-3 w-3" />Until <LocalTime iso={t.snoozed_until} /></span>}
                     </div>

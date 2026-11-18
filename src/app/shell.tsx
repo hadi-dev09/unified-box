@@ -12,7 +12,7 @@ export function Shell({ sidebar, children, initialCollapsed, status = null }: { 
   const [drawer, setDrawer] = useState(false);
   const path = usePathname();
   const params = useSearchParams();
-  useEffect(() => setDrawer(false), [path, params]);
+  useEffect(() => { setDrawer(false); }, [path, params]);
   useEffect(() => {
     if (!drawer) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setDrawer(false);

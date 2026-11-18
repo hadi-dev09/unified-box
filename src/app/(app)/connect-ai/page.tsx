@@ -75,7 +75,8 @@ export default async function ConnectAI() {
             <li>Create app → paste the URL (copied by the button) → Authentication: OAuth</li>
             <li>Sign in and Approve. In a chat, pick Unified Box under + → More</li>
           </ol>
-          <div className="mt-4"><ConnectButton href="https://chatgpt.com/#settings/Connectors" label="Copy URL & open ChatGPT" copyText={url} /></div>
+          <p className="mt-3 text-xs muted">ChatGPT has no one-click link for connectors yet. One-click arrives once Unified Box is approved in ChatGPT&apos;s app directory.</p>
+          <div className="mt-3"><ConnectButton href="https://chatgpt.com/#settings/Connectors" label="Copy URL & open ChatGPT" copyText={url} /></div>
         </div>
       </section>
       <details className="card p-4">

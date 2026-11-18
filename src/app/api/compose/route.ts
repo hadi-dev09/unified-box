@@ -61,12 +61,15 @@ export async function POST(req: NextRequest) {
     subject, body, created_by: "user", ...(sendAt ? { status: "scheduled", send_at: sendAt } : {}),
   }).select("id").single();
   if (error || !d) return bad("could not save", 500);
+  const dropSaved = () => db.from("drafts").delete().eq("user_id", user.id).eq("thread_id", t.id).eq("status", "pending").eq("created_by", "user").is("send_at", null).neq("id", d.id);
   if (sendAt) {
+    await dropSaved();
     await db.from("audit_log").insert({ user_id: user.id, actor: "user", action: "scheduled.created", target: d.id, meta: { send_at: sendAt } });
     return NextResponse.json({ status: "scheduled", send_at: sendAt, draft_id: d.id });
   }
 
   if (!b.send) return NextResponse.json({ status: "pending", draft_id: d.id });
   const r = await decideDraft(user.id, d.id, "approve");
+  if (r.status === 200) await dropSaved();
   return NextResponse.json({ ...r.body, draft_id: d.id }, { status: r.status });
 }

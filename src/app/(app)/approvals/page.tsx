@@ -36,7 +36,7 @@ export default async function Approvals({ searchParams }: { searchParams: Promis
         <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-500/15 text-violet-600 dark:text-violet-300"><Icon name="spark" /></span>
         <p className="text-sm muted">When you ask Claude, ChatGPT or another assistant to <b className="text-[var(--text)]">write a reply</b>, it lands here and inside the conversation, and it is <b className="text-[var(--text)]">never sent until you press Send</b>. Open a draft to read the conversation, tweak the text and send it in one place. Replies you write yourself send straight away.</p>
       </div>
-      <div className="mb-3 flex gap-1">{tab("pending", "AI drafts")}{tab("scheduled", "Scheduled")}{tab("history", "History")}</div>
+      <div className="mb-3 flex gap-1">{tab("pending", "Drafts")}{tab("scheduled", "Scheduled")}{tab("history", "History")}</div>
       {drafts.length === 0 && (
         <div className="card p-8 text-center">
           <p className="font-semibold">{show === "pending" ? "No drafts waiting" : show === "scheduled" ? "Nothing scheduled" : "No history yet"}</p>
@@ -50,7 +50,7 @@ export default async function Approvals({ searchParams }: { searchParams: Promis
             <>
               <div className="flex flex-wrap items-center gap-2 text-xs muted">
                 {d.accounts && <ChannelTag provider={d.accounts.provider} label={shortName(accountName(d.accounts))} />}
-                <span>{d.created_by === "claude" ? "Written by your AI" : "Written by you"}</span>
+                <span>{d.created_by === "claude" ? "Written by your AI" : "Your unsent reply"}</span>
                 <span>·</span><LocalTime iso={d.created_at} />
                 {d.status === "scheduled" && d.send_at ? <span className="chip bg-sky-500/12 text-sky-700 dark:text-sky-300">Sends <LocalTime iso={d.send_at} mode="full" /></span>
                   : d.status !== "pending" && <span className={`chip ${statusChip[d.status] ?? ""}`}>{d.status === "rejected" ? "cancelled/discarded" : d.status}</span>}

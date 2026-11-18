@@ -10,7 +10,7 @@ export function NavProgress() {
   const path = usePathname();
   const sp = useSearchParams();
   const [busy, setBusy] = useState(false);
-  useEffect(() => setBusy(false), [path, sp]);
+  useEffect(() => { setBusy(false); }, [path, sp]);
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;

@@ -17,7 +17,7 @@ export function SearchBox({ initial }: { initial: string }) {
   const [loading, setLoading] = useState(false);
   const box = useRef<HTMLDivElement>(null);
 
-  useEffect(() => setQ(initial), [initial]);
+  useEffect(() => { setQ(initial); }, [initial]);
   useEffect(() => {
     const term = q.trim();
     if (term.length < 2) { setHits([]); setTotal(0); return; }

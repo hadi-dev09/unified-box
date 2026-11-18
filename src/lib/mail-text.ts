@@ -45,11 +45,17 @@ export function parseFrom(v: string): { name: string; addr: string } {
 const BULK_LABELS = ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES", "CATEGORY_FORUMS"];
 
 /** True for newsletters, promos and system mail that doesn't deserve a "needs reply" flag. */
-export function looksAutomated(o: { labels: string[]; fromAddr: string; listUnsubscribe?: string; precedence?: string; autoSubmitted?: string }): boolean {
+/** One-off system mail: login codes, verification, password resets, security alerts, sign-up confirmations. */
+export const TRANSACTIONAL_SUBJECT = /(verif(y|ication)|confirm (your|email)|confirmation code|one[- ]?time|\botp\b|passcode|security (code|alert)|log ?in code|sign[- ]?in (code|attempt|link)|new (log ?in|sign[- ]?in|device)|password|\b2fa\b|two[- ]factor|activate your|activation|welcome to|account (created|has been created|confirmation)|your (\w+ )?code\b|\b\d{4,8}\b is your|is your .{0,30}code|shared some .* data|has been added to your account)/i;
+export const SYSTEM_SENDER = /(^|[._+-])(no-?reply|do-?not-?reply|notifications?|notify|alerts?|security|accounts?|auth|verify|verification|login|mailer-daemon|bounces?|postmaster|news(letter)?|updates?|marketing|info|hello|team)([._+@-]|$)/i;
+
+export function looksAutomated(o: { labels: string[]; fromAddr: string; listUnsubscribe?: string; precedence?: string; autoSubmitted?: string; subject?: string }): boolean {
   if (o.listUnsubscribe) return true;
+  const subj = (o.subject ?? "").trim();
+  if (subj && !/^(re|fw|fwd)\s*:/i.test(subj) && TRANSACTIONAL_SUBJECT.test(subj)) return true;
   if (/^(bulk|list|junk)$/i.test((o.precedence ?? "").trim())) return true;
   const auto = (o.autoSubmitted ?? "").trim().toLowerCase();
   if (auto && auto !== "no") return true;
   if (o.labels.some((l) => BULK_LABELS.includes(l))) return true;
-  return /(^|[._+-])(no-?reply|do-?not-?reply|notifications?|mailer-daemon|bounces?)([._+@-]|$)/i.test(o.fromAddr.split("@")[0] + "@");
+  return SYSTEM_SENDER.test(o.fromAddr.split("@")[0] + "@");
 }

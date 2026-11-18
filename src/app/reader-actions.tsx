@@ -9,7 +9,7 @@ export function ReaderActions({ id, starred, closeHref }: { id: string; starred:
   const [star, setStar] = useState(starred);
   const [menu, setMenu] = useState(false);
   const [, start] = useTransition();
-  useEffect(() => setStar(starred), [starred]);
+  useEffect(() => { setStar(starred); }, [starred]);
   const call = (action: string, until?: string, leave = false) => start(async () => {
     await fetch("/api/threads", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: [id], action, until }) });
     if (leave) { window.dispatchEvent(new Event("ub:navigating")); router.push(closeHref); }
@@ -38,6 +38,8 @@ export function ReaderActions({ id, starred, closeHref }: { id: string; starred:
 
 /** Scrolls an AI draft into view when you arrive from the AI drafts page. */
 export function ScrollToDraft({ id }: { id: string }) {
-  useEffect(() => { document.getElementById(`draft-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }); }, [id]);
+  useEffect(() => { const el = document.getElementById(`draft-${id}`); let p = el?.parentElement ?? null;
+    while (p && !/(auto|scroll)/.test(getComputedStyle(p).overflowY)) p = p.parentElement;
+    if (el && p) p.scrollTo({ top: p.scrollTop + el.getBoundingClientRect().top - p.getBoundingClientRect().top - 80, behavior: "smooth" }); }, [id]);
   return null;
 }

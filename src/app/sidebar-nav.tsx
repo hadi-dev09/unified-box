@@ -112,7 +112,7 @@ function AccountRow({ a, active, count }: { a: SummaryAccount; active: boolean; 
   const [pending, start] = useTransition();
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => { if (editing) ref.current?.select(); }, [editing]);
-  useEffect(() => setName(accountName(a)), [a]);
+  useEffect(() => { setName(accountName(a)); }, [a]);
   const save = () => start(async () => { await renameAccountAction(a.id, name === a.display_name ? "" : name); setEditing(false); });
 
   if (editing) {

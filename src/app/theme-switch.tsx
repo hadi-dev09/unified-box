@@ -9,7 +9,7 @@ const read = (): Theme => ((document.cookie.match(/(?:^|; )ub_theme=([^;]+)/) ??
 /** Light / Dark / System toggle. Applies instantly and is remembered. */
 export function ThemeSwitch() {
   const [theme, setTheme] = useState<Theme>("system");
-  useEffect(() => setTheme(read()), []);
+  useEffect(() => { setTheme(read()); }, []);
   useEffect(() => {
     const m = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => document.documentElement.classList.toggle("dark", theme === "dark" || (theme === "system" && m.matches));

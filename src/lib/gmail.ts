@@ -167,6 +167,7 @@ export async function getMessage(accountId: string, id: string, selfEmail: strin
       listUnsubscribe: header(m.payload, "List-Unsubscribe"),
       precedence: header(m.payload, "Precedence"),
       autoSubmitted: header(m.payload, "Auto-Submitted"),
+      subject: header(m.payload, "Subject"),
     }),
   };
 }

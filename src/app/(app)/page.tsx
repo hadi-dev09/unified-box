@@ -6,7 +6,7 @@ import { cleanQuery, matchingThreadIds } from "@/lib/search";
 import { supabaseServer } from "@/lib/supabase/server";
 import { assignClientAction } from "../actions";
 import { Landing } from "../landing";
-import { Composer, type Preset } from "../composer";
+import { Composer, type Preset, type SavedDraft } from "../composer";
 import { DraftActions } from "./approvals/draft-actions";
 import { LocalTime } from "../local-time";
 import { MarkSeen } from "../mark-seen";
@@ -60,11 +60,17 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
     tq,
     thread ? sb.from("messages").select("id, from_name, from_addr, to_addrs, cc_addrs, sent_at, is_outgoing, body_text, subject").eq("thread_id", thread).order("sent_at") : Promise.resolve({ data: null }),
     thread ? sb.from("threads").select("id, subject, client_id, unread, external_id, account_id, starred").eq("id", thread).maybeSingle() : Promise.resolve({ data: null }),
-    thread ? sb.from("drafts").select("id, subject, body, to_addrs, cc_addrs, created_by, status, send_at").eq("thread_id", thread).in("status", ["pending", "scheduled"]).order("created_at") : Promise.resolve({ data: null }),
+    thread ? sb.from("drafts").select("id, subject, body, to_addrs, cc_addrs, created_by, status, send_at, mode, created_at").eq("thread_id", thread).in("status", ["pending", "scheduled"]).order("created_at") : Promise.resolve({ data: null }),
   ]);
   const threads = (threadRows ?? []) as unknown as ThreadRow[];
   const hasAiKey = thread ? Boolean(await aiKeyInfo(user.id)) : false;
   const messages = (msgRows ?? []) as (Msg & { id: string })[];
+  const mine = ((aiDrafts ?? []) as { status: string; created_by: string; send_at: string | null; mode: string; to_addrs: string[]; cc_addrs: string[] | null; subject: string; body: string; created_at: string }[])
+    .find((d) => d.status === "pending" && d.created_by === "user" && !d.send_at);
+  const savedDraft: SavedDraft | null = mine ? { mode: (["reply", "reply_all", "forward"].includes(mine.mode) ? mine.mode : "reply") as SavedDraft["mode"], to: mine.to_addrs, cc: mine.cc_addrs ?? [], subject: mine.subject, body: mine.body, savedAt: mine.created_at } : null;
+  // Conversations with a reply you started but didn't send get a "Draft" tag in the list.
+  const { data: draftRows } = await sb.from("drafts").select("thread_id").eq("user_id", user.id).eq("status", "pending").not("thread_id", "is", null).limit(500);
+  const draftThreads = new Set(((draftRows ?? []) as { thread_id: string }[]).map((d) => d.thread_id));
 
   const qs = (o: Partial<Search>) => {
     const p = new URLSearchParams(Object.entries({ account, client, provider, f: view === "all" ? undefined : view, q: q || undefined, ...o }).filter(([, v]) => v) as [string, string][]);
@@ -160,7 +166,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
             {((aiDrafts ?? []) as { id: string; body: string; to_addrs: string[]; status: string; send_at: string | null }[]).filter((d) => d.status === "scheduled" && d.send_at).map((d) => (
               <ScheduledCard key={d.id} id={d.id} sendAt={d.send_at!} body={d.body} to={d.to_addrs.length ? `To ${d.to_addrs.join(", ")}` : "In this chat"} />
             ))}
-            {((aiDrafts ?? []) as { id: string; subject: string; body: string; to_addrs: string[]; cc_addrs: string[] | null; created_by: string; status: string }[]).filter((d) => d.status === "pending").map((d) => (
+            {((aiDrafts ?? []) as { id: string; subject: string; body: string; to_addrs: string[]; cc_addrs: string[] | null; created_by: string; status: string }[]).filter((d) => d.status === "pending" && d.created_by !== "user").map((d) => (
               <div key={d.id} id={`draft-${d.id}`} className={`scroll-mt-24 rounded-2xl border p-4 ${sp.draft === d.id ? "border-violet-400 ring-4 ring-violet-500/15" : "border-violet-300/60"} bg-violet-500/5`}>
                 <p className="mb-1 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-700 dark:text-violet-300">
                   <Icon name="spark" className="h-3.5 w-3.5" /> {d.created_by === "claude" ? "Reply drafted by your AI" : "Your saved draft"} · not sent yet
@@ -171,7 +177,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
             ))}
             <div className="pt-2">
               <Composer threadId={cur.id} provider={acct?.provider ?? "gmail"} canSend={Boolean(acct?.can_send)} showReplyAll={isGroup(messages, self)}
-                presets={presets} reconnectHref={reconnectHref} openHref={openHref} hasAiKey={hasAiKey} />
+                presets={presets} reconnectHref={reconnectHref} openHref={openHref} hasAiKey={hasAiKey} saved={savedDraft} />
             </div>
           </div>
         </div>
@@ -185,7 +191,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
     return {
       id: t.id, subject: t.subject, snippet: t.snippet, last_message_at: t.last_message_at, unread: t.unread, needs_reply: t.needs_reply, last_from: t.last_from,
       starred: Boolean(t.starred), snoozed_until: t.snoozed_until, trashed_at: t.trashed_at, provider: a?.provider ?? null,
-      accountLabel: a ? shortName(accountName(a)) : "", client: t.clients?.name ?? null,
+      accountLabel: a ? shortName(accountName(a)) : "", client: t.clients?.name ?? null, hasDraft: draftThreads.has(t.id),
     };
   });
   const hrefFor = Object.fromEntries(threads.map((t) => [t.id, qs({ thread: t.id, draft: undefined })]));
@@ -221,7 +227,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   return (
     <>
       {sp.notice === "password-updated" && <p className="bg-emerald-500/10 px-4 py-2 text-center text-sm text-emerald-700 dark:text-emerald-300">Your password was updated.</p>}
-      <header className={`${open ? "hidden lg:flex" : "flex"} h-14 shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--surface)]/80 px-3 backdrop-blur md:gap-3 md:px-5`}>
+      <header className={`${open ? "hidden lg:flex" : "flex"} relative z-30 h-14 shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--surface)]/80 px-3 backdrop-blur md:gap-3 md:px-5`}>
         <MenuButton />
         <h2 className="hidden min-w-0 max-w-[30%] truncate text-[15px] font-semibold sm:block md:text-base">{title}</h2>
         <div className="mx-auto w-full max-w-xl"><SearchBox initial={q} /></div>

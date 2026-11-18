@@ -3,6 +3,8 @@ import { Suspense } from "react";
 import { cookies } from "next/headers";
 import { inboxSummary } from "@/lib/inbox-summary";
 import { supabaseServer } from "@/lib/supabase/server";
+import { aiKeyInfo } from "@/lib/ai-assist";
+import { AiPanel } from "../ai-panel";
 import { LiveSync } from "../live-sync";
 import { Shell } from "../shell";
 import { SidebarNav } from "../sidebar-nav";
@@ -20,6 +22,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (!user) return <>{children}</>;
   const s = await inboxSummary();
   const collapsed = (await cookies()).get("ub_sidebar")?.value === "collapsed";
+  const hasAi = Boolean(await aiKeyInfo(user.id));
   return (
     <Shell
       initialCollapsed={collapsed}
@@ -27,6 +30,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       status={<LiveSync enabled={s.accounts.some((a) => a.status === "connected" || a.status === "error")} lastSyncedAt={s.lastSynced} unreadTotal={s.unreadTotal} />}
     >
       {children}
+      {hasAi && <Suspense><AiPanel /></Suspense>}
     </Shell>
   );
 }

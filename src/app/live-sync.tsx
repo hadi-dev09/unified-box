@@ -24,7 +24,7 @@ export function LiveSync({ enabled, lastSyncedAt }: { enabled: boolean; lastSync
   const busy = useRef(false);
   const version = useRef<string | null>(null);
 
-  useEffect(() => setAt((prev) => (lastSyncedAt && (!prev || lastSyncedAt > prev) ? lastSyncedAt : prev)), [lastSyncedAt]);
+  useEffect(() => { setAt((prev) => (lastSyncedAt && (!prev || lastSyncedAt > prev) ? lastSyncedAt : prev)); }, [lastSyncedAt]);
 
   const check = useCallback(async () => {
     if (!enabled || busy.current || document.visibilityState !== "visible") return;

@@ -82,7 +82,7 @@ export function toMsg(m: GraphMsg, self: string): GmailMsg {
     messageId: m.internetMessageId ?? "", body: (m.body?.content ?? "").trim().slice(0, 20_000),
     sentAt: new Date(m.receivedDateTime).toISOString(), snippet: decodeEntities(m.bodyPreview ?? ""),
     unread: !outgoing && m.isRead === false, outgoing,
-    automated: m.inferenceClassification === "other" || looksAutomated({ labels: [], fromAddr: from }),
+    automated: m.inferenceClassification === "other" || looksAutomated({ labels: [], fromAddr: from, subject: m.subject ?? "" }),
   };
 }
 

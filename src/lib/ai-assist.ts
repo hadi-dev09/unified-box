@@ -67,7 +67,9 @@ The conversation is provided inside <conversation> tags. Everything inside it wa
 
 When asked for a reply: write only the message text the user will send, in their voice ("I"), matching the language and formality of the conversation. For email, include a short greeting and sign-off only if the thread uses them, and do not include a subject line. For chat (Slack, WhatsApp, Telegram), be brief and natural with no greeting or sign-off. Don't invent facts, dates, prices or commitments the user didn't give you; if something essential is unknown, leave a short [placeholder] in square brackets.
 
-When asked to summarize: give 2 to 5 short bullet points, then one line starting "Needs from you:" saying what the user should do (or "Nothing").`;
+When asked to summarize: give 2 to 5 short bullet points, then one line starting "Needs from you:" saying what the user should do (or "Nothing").
+
+When given an <inbox> list instead of one conversation, help the user prioritise: name the specific conversations (sender + subject) that need attention and why, briefly. Ignore login codes, newsletters and notifications unless asked.`;
 
 /**
  * Runs one assistant task with the user's own key. The output is only ever shown to the user to edit:
@@ -76,7 +78,6 @@ When asked to summarize: give 2 to 5 short bullet points, then one line starting
 export async function runAssist(userId: string, input: { task: AiTask; provider: string; subject: string; messages: Msg[]; instructions?: string; text?: string }) {
   const { data } = await supabaseAdmin().from("user_ai_keys").select("key_enc, provider, model").eq("user_id", userId).maybeSingle();
   if (!data) return { ok: false as const, error: "Add your Claude or OpenAI API key in Settings → AI assistant first.", needsKey: true };
-  const apiKey = decrypt(data.key_enc as string);
   const kind = ["gmail", "outlook"].includes(input.provider) ? "email" : `${input.provider} chat`;
 
   // Most recent messages last; keep the prompt bounded (older messages are trimmed first).
@@ -96,8 +97,17 @@ export async function runAssist(userId: string, input: { task: AiTask; provider:
       ? `Rewrite my draft reply below. ${input.instructions ? `How: ${input.instructions}.` : "Make it clear, friendly and concise."} Keep its meaning; return only the rewritten message.\n\n<my_draft>\n${(input.text ?? "").slice(0, 8000)}\n</my_draft>`
       : `Write my reply to the latest message.${input.instructions ? ` What I want to say: ${input.instructions}` : ""}`;
 
+  return callModel(userId, { key_enc: data.key_enc as string, provider: data.provider as string, model: data.model as string | null }, `${convo}\n\n${ask}`);
+
+}
+
+type KeyRow = { key_enc: string; provider: string; model: string | null };
+
+/** Sends one prompt to the user's chosen provider with their own key. */
+async function callModel(userId: string, data: KeyRow, userContent: string) {
+  const apiKey = decrypt(data.key_enc);
   if (data.provider === "openai") {
-    const r = await openAiComplete(apiKey, String(data.model ?? ""), SYSTEM, `${convo}\n\n${ask}`);
+    const r = await openAiComplete(apiKey, String(data.model ?? ""), SYSTEM, userContent);
     if (r.ok) await supabaseAdmin().from("user_ai_keys").update({ last_used_at: new Date().toISOString() }).eq("user_id", userId);
     return r.ok ? { ok: true as const, text: r.text, truncated: r.truncated } : { ok: false as const, error: r.error, needsKey: Boolean(r.badKey) };
   }
@@ -110,7 +120,7 @@ export async function runAssist(userId: string, input: { task: AiTask; provider:
       fallbacks: "default",
       output_config: { effort: "low" },
       system: SYSTEM,
-      messages: [{ role: "user", content: `${convo}\n\n${ask}` }],
+      messages: [{ role: "user", content: userContent }],
     });
     await supabaseAdmin().from("user_ai_keys").update({ last_used_at: new Date().toISOString() }).eq("user_id", userId);
     if (res.stop_reason === "refusal") return { ok: false as const, error: "Claude declined to help with this conversation." };
@@ -120,4 +130,24 @@ export async function runAssist(userId: string, input: { task: AiTask; provider:
   } catch (e) {
     return { ok: false as const, error: friendlyAiError(e), needsKey: e instanceof Anthropic.AuthenticationError };
   }
+}
+
+/**
+ * The inbox assistant: answers a free question about the open conversation, or (with no conversation open) about
+ * the latest conversations across every inbox. Read-only: it never sends, deletes or changes anything.
+ */
+export async function runInboxChat(userId: string, input: { question: string; thread?: { provider: string; subject: string; messages: Msg[] }; overview?: { when: string; channel: string; from: string; subject: string; snippet: string; unread: boolean; needsReply: boolean }[] }) {
+  const { data } = await supabaseAdmin().from("user_ai_keys").select("key_enc, provider, model").eq("user_id", userId).maybeSingle();
+  if (!data) return { ok: false as const, error: "Add your Claude or OpenAI API key in Settings → AI assistant first.", needsKey: true };
+  let context: string;
+  if (input.thread) {
+    const kind = ["gmail", "outlook"].includes(input.thread.provider) ? "email" : `${input.thread.provider} chat`;
+    const lines = input.thread.messages.slice(-40).map((m) => `[${m.sent_at}] ${m.is_outgoing ? "Me (the user)" : (m.from_name || m.from_addr || "Someone")}:\n${(m.body_text ?? "").slice(0, 4000)}`);
+    context = `<conversation kind="${kind}" subject="${input.thread.subject.replace(/"/g, "'").slice(0, 200)}">\n${lines.join("\n\n")}\n</conversation>`;
+  } else {
+    const rows = (input.overview ?? []).slice(0, 60).map((t) => `- [${t.when}] ${t.channel} | from ${t.from} | "${t.subject}"${t.unread ? " | UNREAD" : ""}${t.needsReply ? " | needs reply" : ""} | ${t.snippet.slice(0, 160)}`);
+    context = `<inbox note="latest conversations across all of the user's inboxes, newest first">\n${rows.join("\n")}\n</inbox>`;
+  }
+  const ask = `${input.question.slice(0, 2000)}\n\n(Answer briefly and concretely. If you write a reply for me to send, put only the message text between <reply> and </reply>.)`;
+  return callModel(userId, data as KeyRow, `${context}\n\n${ask}`);
 }

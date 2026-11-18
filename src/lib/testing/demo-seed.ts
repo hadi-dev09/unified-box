@@ -97,7 +97,8 @@ export function installDemoNetwork() {
     if (url.startsWith("https://api.anthropic.com/v1/models")) return ok({ data: [{ id: "claude-opus-5-5", type: "model" }], has_more: false, first_id: "a", last_id: "a" });
     if (url.startsWith("https://api.anthropic.com/v1/messages")) {
       const ask = String(JSON.parse(String(init?.body ?? "{}")).messages?.[0]?.content ?? "");
-      const text = /Summarize/.test(ask) ? "• Sarah needs mockups signed off by Friday\n• Board review is Monday\nNeeds from you: confirm the delivery date." : /Rewrite my draft/.test(ask) ? "Hi Sarah, the mockups will be ready for your review by Thursday noon. Thanks!" : "Hi Sarah,\n\nThanks for checking in. The mockups will be with you by Thursday, so you'll have time to sign off before Friday.\n\nBest,\nRafay";
+      const text = /Draft a reply[\s\S]*<reply>/.test(ask) ? "Here's a reply you can send:\n<reply>Hi Sarah, the mockups will be ready Thursday. Thanks!</reply>"
+        : /<inbox/.test(ask) ? "1. Sarah Mitchell, \"Q4 deliverables\": needs your sign-off by Friday.\n2. Greenbridge Accounts: invoice #1042 is overdue." : /Summarize/.test(ask) ? "• Sarah needs mockups signed off by Friday\n• Board review is Monday\nNeeds from you: confirm the delivery date." : /Rewrite my draft/.test(ask) ? "Hi Sarah, the mockups will be ready for your review by Thursday noon. Thanks!" : "Hi Sarah,\n\nThanks for checking in. The mockups will be with you by Thursday, so you'll have time to sign off before Friday.\n\nBest,\nRafay";
       return ok({ id: "msg_demo", type: "message", role: "assistant", model: "claude-opus-5-5", content: [{ type: "text", text }], stop_reason: "end_turn", stop_details: null, usage: { input_tokens: 1, output_tokens: 1 } });
     }
     if (url.includes("slack.com/api/chat.postMessage")) return ok({ ok: true, ts: `${Math.floor(Date.now() / 1000)}.000100` });
