@@ -358,29 +358,62 @@ export async function syncSlackReadState(accountId: string, maxConvs = 30) {
   const db = supabaseAdmin();
   const tk = await slackToken(accountId);
   if (!tk) return { checked: 0, changed: 0 };
-  const { data: threads } = await db.from("threads").select("id, external_id, unread, last_from").eq("account_id", accountId).order("last_message_at", { ascending: false }).limit(maxConvs * 2);
+  const { data: threads } = await db.from("threads").select("id, external_id, unread").eq("account_id", accountId).order("last_message_at", { ascending: false }).limit(maxConvs * 2);
+  const channels = ((threads ?? []) as ChanRow[]).filter((t) => !t.external_id.includes("/")).slice(0, maxConvs);
   let checked = 0, changed = 0;
-  const channels = ((threads ?? []) as { id: string; external_id: string; unread: boolean; last_from: string | null }[]).filter((t) => !t.external_id.includes("/")).slice(0, maxConvs);
   for (const t of channels) {
-    let lastRead: string | undefined;
-    try {
-      const j = await call<{ channel: { last_read?: string } }>(tk.token, "conversations.info", { channel: t.external_id });
-      lastRead = j.channel.last_read;
-    } catch (e) {
-      if (e instanceof SlackRateLimited || e instanceof SlackNeedsReauth) break;
-      continue;
-    }
-    checked++;
-    if (!lastRead) continue;
-    // Thread replies have their own read state in Slack; compare only messages in the main conversation.
-    const { data: newest } = await db.from("messages").select("external_id, is_outgoing").eq("thread_id", t.id).eq("is_outgoing", false).is("thread_ts", null).order("sent_at", { ascending: false }).limit(1).maybeSingle();
-    const newestTs = newest ? String(newest.external_id).split(":").pop() ?? "0" : "0";
-    // Your own messages never count as unread (same as Slack).
-    const unread = parseFloat(newestTs) > parseFloat(lastRead);
-    if (unread !== t.unread) { await db.from("threads").update({ unread, ...(unread ? {} : { seen_at: new Date().toISOString() }) }).eq("id", t.id); changed++; }
+    const r = await checkChannelRead(db, tk.token, t);
+    if (r === "stop") break;
+    if (r !== "skip") checked++;
+    if (r === "changed") changed++;
   }
   changed += await syncSlackThreadReadState(db, tk.token, accountId);
   return { checked, changed };
+}
+
+type ChanRow = { id: string; external_id: string; unread: boolean };
+
+/** Asks Slack where you've read up to in one DM/channel and updates unread here. Your own messages never count as unread. */
+async function checkChannelRead(db: Db, token: string, t: ChanRow): Promise<"same" | "changed" | "skip" | "stop"> {
+  let lastRead: string | undefined;
+  try {
+    lastRead = (await call<{ channel: { last_read?: string } }>(token, "conversations.info", { channel: t.external_id })).channel.last_read;
+  } catch (e) {
+    return e instanceof SlackRateLimited || e instanceof SlackNeedsReauth ? "stop" : "skip";
+  }
+  if (!lastRead) return "skip";
+  // Thread replies have their own read state in Slack; compare only messages in the main conversation.
+  const { data: newest } = await db.from("messages").select("external_id").eq("thread_id", t.id).eq("is_outgoing", false).is("thread_ts", null).order("sent_at", { ascending: false }).limit(1).maybeSingle();
+  const newestTs = newest ? String(newest.external_id).split(":").pop() ?? "0" : "0";
+  const unread = parseFloat(newestTs) > parseFloat(lastRead);
+  if (unread === t.unread) return "same";
+  await db.from("threads").update({ unread, ...(unread ? {} : { seen_at: new Date().toISOString() }) }).eq("id", t.id);
+  return "changed";
+}
+
+/**
+ * Fast read-state check while the app is open (every few seconds). Slack has no "message was read" event for apps
+ * like this (read markers are only pushed over its retired real-time API), so the app asks. conversations.info is
+ * a generous Slack limit (~50/min), so each check covers every unread DM/channel (up to 4) plus one other in rotation
+ * (to catch "Mark unread" done in Slack). At most one check per account every 4 seconds, whoever triggers it.
+ */
+export async function quickSlackReadCheck(accountId: string) {
+  const db = supabaseAdmin();
+  const { data: acct } = await db.from("accounts").select("read_checked_at").eq("id", accountId).maybeSingle();
+  if (acct?.read_checked_at && Date.now() - new Date(acct.read_checked_at).getTime() < 4000) return 0;
+  await db.from("accounts").update({ read_checked_at: new Date().toISOString() }).eq("id", accountId);
+  const tk = await slackToken(accountId);
+  if (!tk) return 0;
+  const { data } = await db.from("threads").select("id, external_id, unread, remote_checked_at").eq("account_id", accountId).order("last_message_at", { ascending: false }).limit(40);
+  const rows = ((data ?? []) as (ChanRow & { remote_checked_at: string | null })[]).filter((t) => !t.external_id.includes("/"));
+  const pick = [
+    ...rows.filter((t) => t.unread).slice(0, 4),
+    ...rows.filter((t) => !t.unread).sort((a, b) => (a.remote_checked_at ?? "").localeCompare(b.remote_checked_at ?? "")).slice(0, 1),
+  ];
+  const now = new Date().toISOString();
+  const results = await Promise.all(pick.map((t) => checkChannelRead(db, tk.token, t)));
+  if (pick.length) await db.from("threads").update({ remote_checked_at: now }).in("id", pick.map((t) => t.id));
+  return results.filter((r) => r === "changed").length;
 }
 
 /**

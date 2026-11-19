@@ -17,7 +17,7 @@ function ago(iso: string | null, now: number) {
  * Keeps the inbox fresh: the server syncs every minute (and Slack/WhatsApp push instantly); this asks for a tiny
  * fingerprint every 20s while the tab is visible and reloads the screen only when something changed.
  */
-export function LiveSync({ enabled, lastSyncedAt }: { enabled: boolean; lastSyncedAt: string | null; unreadTotal?: number }) {
+export function LiveSync({ enabled, lastSyncedAt, slack = false }: { enabled: boolean; lastSyncedAt: string | null; unreadTotal?: number; slack?: boolean }) {
   const router = useRouter();
   const [at, setAt] = useState(lastSyncedAt);
   const [state, setState] = useState<"idle" | "syncing" | "error">("idle");
@@ -53,6 +53,27 @@ export function LiveSync({ enabled, lastSyncedAt }: { enabled: boolean; lastSync
     window.addEventListener("focus", onVisible);
     return () => { clearInterval(poll); clearInterval(tick); document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("focus", onVisible); };
   }, [enabled, check]);
+
+  // Slack never tells apps when you read something, so while this tab is visible the app asks every 5 seconds.
+  useEffect(() => {
+    if (!enabled || !slack) return;
+    let inFlight = false;
+    const tick = async () => {
+      if (inFlight || document.visibilityState !== "visible") return;
+      inFlight = true;
+      try {
+        const r = await fetch("/api/slack/read-state", { method: "POST", cache: "no-store" });
+        const j = (await r.json().catch(() => ({}))) as { changed?: number };
+        if (j.changed) router.refresh();
+      } catch { /* offline: next tick */ } finally { inFlight = false; }
+    };
+    tick();
+    const id = setInterval(tick, 5000);
+    const onVisible = () => { if (document.visibilityState === "visible") tick(); };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => { clearInterval(id); document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("focus", onVisible); };
+  }, [enabled, slack, router]);
 
   // Instant updates: the database tells this tab the moment one of your conversations changes (new message, read in
   // Slack, …), so the screen refreshes within a second instead of waiting for the 20s check. Row-level security

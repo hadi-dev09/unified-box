@@ -34,7 +34,7 @@ export async function backgroundSync(budgetMs = 50_000) {
   // Slack read state is cheap to check, so do it every minute (history polling is the slow part).
   const slackIds = (data ?? []).filter((a: { provider: string }) => a.provider === "slack").map((a: { id: string }) => a.id);
   const { syncSlackReadState } = await import("./slack");
-  await Promise.all(slackIds.map((id: string) => syncSlackReadState(id).catch(() => null)));
+  await Promise.all(slackIds.map((id: string) => syncSlackReadState(id, 15).catch(() => null)));
   let done = 0;
   await mapLimit(due, 5, async (a: { id: string }) => {
     if (Date.now() - start > budgetMs) return;

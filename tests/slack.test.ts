@@ -287,3 +287,23 @@ test("slack threads: replies in your threads become their own conversation, with
   assert.equal(item.unread, false);
   assert.ok(net.calls.every((c) => !c.url.includes("channel=D8%2F")), "thread conversations aren't sent to conversations.info");
 });
+
+test("slack quick read check: unread DMs/channels are re-checked at once, at most every 4 seconds", async () => {
+  const { quickSlackReadCheck } = await import("../src/lib/slack");
+  db.rows("accounts").push({ id: "s7", user_id: A.id, provider: "slack", display_name: "WS", external_id: "T1:U1", status: "connected" });
+  db.rows("account_secrets").push({ account_id: "s7", tokens_enc: encrypt(JSON.stringify({ access_token: "xoxp-1", scope: "im:history" })) });
+  db.rows("threads").push(
+    { id: "q1", user_id: A.id, account_id: "s7", external_id: "D71", unread: true, last_message_at: new Date().toISOString() },
+    { id: "q2", user_id: A.id, account_id: "s7", external_id: "D71/1700000001.000100", unread: true, last_message_at: new Date().toISOString() },
+  );
+  db.rows("messages").push({ id: "qm", user_id: A.id, account_id: "s7", thread_id: "q1", external_id: "D71:1700000100.000100", is_outgoing: false, sent_at: new Date().toISOString() });
+  const net = stubFetch((c) => (c.url.includes("conversations.info") ? { ok: true, channel: { last_read: "1700000100.000100" } } : undefined));
+  try {
+    assert.equal(await quickSlackReadCheck("s7"), 1);
+    assert.equal(db.rows("threads").find((t) => t.id === "q1")!.unread, false);
+    assert.ok(net.calls.every((c) => !c.url.includes("D71%2F")), "threads are not sent to conversations.info");
+    const n = net.calls.length;
+    assert.equal(await quickSlackReadCheck("s7"), 0);
+    assert.equal(net.calls.length, n, "throttled: no second call within 4 seconds");
+  } finally { net.restore(); }
+});
