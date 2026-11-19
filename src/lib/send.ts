@@ -90,8 +90,13 @@ async function deliverDraft(userId: string, d: Record<string, any>): Promise<Res
         const { telegramSend } = await import("./telegram");
         sentId = `${t.external_id}:${(await telegramSend(d.account_id, t.external_id, text)).id}`;
       } else if (prov === "slack") {
-        const { slackSend } = await import("./slack");
-        sentId = `${t.external_id}:${(await slackSend(d.account_id, t.external_id, text, (d.reply_to as string | null) ?? null)).ts}`;
+        const { slackSend, splitSlackExt, slackThreadKey, slackThreadTitle } = await import("./slack");
+        // A thread conversation always replies in its thread; a channel reply can target a thread too ("Reply in thread").
+        const { channel, threadTs } = splitSlackExt(t.external_id);
+        const replyTo = threadTs ?? ((d.reply_to as string | null) ?? null);
+        sentId = `${channel}:${(await slackSend(d.account_id, channel, text, replyTo)).ts}`;
+        if (replyTo && !threadTs) { t.external_id = slackThreadKey(channel, replyTo); t.subject = slackThreadTitle(t.subject ?? ""); }
+        d.reply_to = replyTo;
       } else throw new Error("Unsupported account");
       // Show the sent message in the conversation right away.
       const now = new Date().toISOString();

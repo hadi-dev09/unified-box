@@ -87,7 +87,64 @@ export async function slackRevoke(token: string) {
 }
 
 type Conv = { id: string; name?: string; is_im?: boolean; is_mpim?: boolean; is_private?: boolean; user?: string };
-type Msg = { ts?: string; user?: string; bot_id?: string; username?: string; text?: string; subtype?: string; thread_ts?: string };
+type Msg = { ts?: string; user?: string; bot_id?: string; username?: string; text?: string; subtype?: string; thread_ts?: string; reply_count?: number; latest_reply?: string };
+
+/** A Slack thread you're part of is its own conversation here: external_id "<channel>/<thread ts>". */
+export const slackThreadKey = (channel: string, threadTs: string) => `${channel}/${threadTs}`;
+export function splitSlackExt(ext: string): { channel: string; threadTs: string | null } {
+  const [channel, threadTs] = String(ext).split("/");
+  return { channel, threadTs: threadTs || null };
+}
+export const slackThreadTitle = (channelTitle: string) => `Thread in ${channelTitle.replace(/^Thread in /, "")}`;
+const isReply = (m: { ts?: string; thread_ts?: string; subtype?: string }) => Boolean(m.thread_ts && m.thread_ts !== m.ts && m.subtype !== "thread_broadcast");
+
+type Db = ReturnType<typeof supabaseAdmin>;
+/** Threads count as "yours" (and get their own conversation) in DMs, when you started or replied in them, or when you're mentioned. */
+async function threadIsMine(db: Db, accountId: string, channel: string, threadTs: string, direct: boolean, selfId: string, msgs: { user?: string; text?: string }[]) {
+  if (direct || msgs.some((m) => m.user === selfId || (m.text ?? "").includes(`<@${selfId}>`))) return true;
+  const { data: item } = await db.from("threads").select("id").eq("account_id", accountId).eq("external_id", slackThreadKey(channel, threadTs)).maybeSingle();
+  if (item) return true;
+  const { data: parent } = await db.from("messages").select("is_outgoing").eq("account_id", accountId).eq("external_id", `${channel}:${threadTs}`).maybeSingle();
+  return Boolean(parent?.is_outgoing);
+}
+
+/**
+ * Stores thread replies in the thread's own conversation. `lastRead` (from Slack, when known) decides unread;
+ * otherwise a new reply from someone else makes it unread.
+ */
+async function storeThreadReplies(db: Db, acct: { id: string; user_id: string }, channel: string, threadTs: string, channelTitle: string, selfId: string,
+  replies: Msg[], names: Record<string, string>, lastRead?: string) {
+  if (!replies.length) return null;
+  replies.sort((a, b) => parseFloat(a.ts!) - parseFloat(b.ts!));
+  const key = slackThreadKey(channel, threadTs);
+  const { data: prev } = await db.from("threads").select("id, last_message_at, unread").eq("account_id", acct.id).eq("external_id", key).maybeSingle();
+  const last = replies[replies.length - 1];
+  const lastAt = slackTsToIso(last.ts!);
+  const isNewer = !prev || new Date(lastAt).getTime() > new Date(prev.last_message_at).getTime();
+  const lastMine = last.user === selfId;
+  const newestIn = [...replies].reverse().find((m) => m.user !== selfId);
+  const unread = lastRead !== undefined
+    ? Boolean(newestIn && parseFloat(newestIn.ts!) > parseFloat(lastRead))
+    : isNewer ? !lastMine : Boolean(prev?.unread);
+  const title = slackThreadTitle(channelTitle);
+  const { data: t, error } = await db.from("threads").upsert({
+    user_id: acct.user_id, account_id: acct.id, external_id: key, subject: title, unread,
+    ...(isNewer ? {
+      snippet: slackTextToPlain(last.text ?? "", names).slice(0, 200), last_message_at: lastAt,
+      needs_reply: !lastMine, last_from: lastMine ? "You" : (last.user ? names[last.user] : last.username) ?? "Slack",
+    } : {}),
+    ...(unread ? {} : { seen_at: new Date().toISOString() }),
+  }, { onConflict: "account_id,external_id" }).select("id").single();
+  if (error || !t) throw new Error(error?.message ?? "thread upsert failed");
+  const { error: e2 } = await db.from("messages").upsert(replies.map((m) => ({
+    user_id: acct.user_id, account_id: acct.id, thread_id: t.id, external_id: `${channel}:${m.ts}`,
+    from_addr: m.user ?? m.bot_id ?? "", from_name: m.user ? names[m.user] : m.username ?? "Bot",
+    to_addrs: [], subject: title, body_text: slackTextToPlain(m.text ?? "", names).slice(0, 20_000),
+    sent_at: slackTsToIso(m.ts!), is_outgoing: m.user === selfId, thread_ts: threadTs,
+  })), { onConflict: "account_id,external_id" });
+  if (e2) throw new Error(e2.message);
+  return t.id as string;
+}
 
 const MAX_CONVS_PER_SYNC = 20;
 const HISTORY_DAYS = 14;
@@ -139,7 +196,7 @@ export async function syncSlack(accountId: string) {
     };
 
     const oldest = String(Math.floor(Date.now() / 1000) - HISTORY_DAYS * 86400);
-    let synced = 0, done = 0;
+    let synced = 0, done = 0, repliesBudget = 3;
 
     for (const c of window) {
       let msgs: Msg[];
@@ -181,6 +238,25 @@ export async function syncSlack(accountId: string) {
       })), { onConflict: "account_id,external_id" });
       if (e2) throw new Error(e2.message);
       synced += msgs.length;
+
+      // Threads with new replies (Slack only lists the parent in history): fetch the replies for threads you're in.
+      for (const m of msgs.filter((x) => (x.reply_count ?? 0) > 0 && x.latest_reply).slice(-5)) {
+        if (repliesBudget <= 0) break;
+        if (!(await threadIsMine(db, accountId, c.id, m.ts!, Boolean(c.is_im || c.is_mpim), selfId, [m]))) continue;
+        const { data: item } = await db.from("threads").select("last_message_at").eq("account_id", accountId).eq("external_id", slackThreadKey(c.id, m.ts!)).maybeSingle();
+        if (item && new Date(item.last_message_at).getTime() >= new Date(slackTsToIso(m.latest_reply!)).getTime()) continue;
+        repliesBudget--;
+        try {
+          const r = await call<{ messages: Msg[] }>(token, "conversations.replies", { channel: c.id, ts: m.ts!, limit: "50" });
+          const parent = r.messages.find((x) => x.ts === m.ts) as (Msg & { last_read?: string }) | undefined;
+          const replies = r.messages.filter((x) => x.ts !== m.ts && isRealMessage(x));
+          for (const x of replies) if (x.user) await userName(x.user);
+          await storeThreadReplies(db, acct, c.id, m.ts!, title, selfId, replies, names, parent?.last_read);
+        } catch (e) {
+          if (e instanceof SlackRateLimited) { repliesBudget = 0; continue; }
+          if (e instanceof SlackNeedsReauth) throw e;
+        }
+      }
     }
 
     await db.from("accounts").update({
@@ -241,6 +317,12 @@ export async function ingestSlackEvent(acct: { id: string; user_id: string; exte
   const text = slackTextToPlain(ev.text ?? "", names) || (ev.subtype === "file_share" ? "📎 File" : "");
   const at = slackTsToIso(ev.ts);
   const direct = ev.channel_type === "im" || ev.channel_type === "mpim";
+  // A reply in a thread you're part of goes to that thread's own conversation (the channel itself isn't bumped, like Slack).
+  if (isReply(ev) && await threadIsMine(db, acct.id, ev.channel, ev.thread_ts!, direct, selfId, [ev])) {
+    await storeThreadReplies(db, acct, ev.channel, ev.thread_ts!, title!, selfId, [{ ...ev, text: ev.text || (ev.subtype === "file_share" ? "📎 File" : "") }], names);
+    await db.from("accounts").update({ last_synced_at: new Date().toISOString(), status: "connected", status_detail: null }).eq("id", acct.id);
+    return true;
+  }
   const mentioned = (ev.text ?? "").includes(`<@${selfId}>`);
   const { data: t, error } = await db.from("threads").upsert({
     user_id: acct.user_id, account_id: acct.id, external_id: ev.channel, subject: title, snippet: text.slice(0, 200), last_message_at: at,
@@ -274,9 +356,10 @@ export async function syncSlackReadState(accountId: string, maxConvs = 30) {
   const db = supabaseAdmin();
   const tk = await slackToken(accountId);
   if (!tk) return { checked: 0, changed: 0 };
-  const { data: threads } = await db.from("threads").select("id, external_id, unread, last_from").eq("account_id", accountId).order("last_message_at", { ascending: false }).limit(maxConvs);
+  const { data: threads } = await db.from("threads").select("id, external_id, unread, last_from").eq("account_id", accountId).order("last_message_at", { ascending: false }).limit(maxConvs * 2);
   let checked = 0, changed = 0;
-  for (const t of (threads ?? []) as { id: string; external_id: string; unread: boolean; last_from: string | null }[]) {
+  const channels = ((threads ?? []) as { id: string; external_id: string; unread: boolean; last_from: string | null }[]).filter((t) => !t.external_id.includes("/")).slice(0, maxConvs);
+  for (const t of channels) {
     let lastRead: string | undefined;
     try {
       const j = await call<{ channel: { last_read?: string } }>(tk.token, "conversations.info", { channel: t.external_id });
@@ -290,10 +373,36 @@ export async function syncSlackReadState(accountId: string, maxConvs = 30) {
     // Thread replies have their own read state in Slack; compare only messages in the main conversation.
     const { data: newest } = await db.from("messages").select("external_id, is_outgoing").eq("thread_id", t.id).eq("is_outgoing", false).is("thread_ts", null).order("sent_at", { ascending: false }).limit(1).maybeSingle();
     const newestTs = newest ? String(newest.external_id).split(":").pop() ?? "0" : "0";
-    const unread = t.last_from !== "You" && parseFloat(newestTs) > parseFloat(lastRead);
+    // Your own messages never count as unread (same as Slack).
+    const unread = parseFloat(newestTs) > parseFloat(lastRead);
     if (unread !== t.unread) { await db.from("threads").update({ unread, ...(unread ? {} : { seen_at: new Date().toISOString() }) }).eq("id", t.id); changed++; }
   }
+  changed += await syncSlackThreadReadState(db, tk.token, accountId);
   return { checked, changed };
+}
+
+/**
+ * Thread read state, Slack → here. Slack reports where you've read up to in a thread (last_read on the parent) but its
+ * history methods allow non-Marketplace apps one call a minute, so each minute checks one unread thread, oldest-checked first.
+ */
+async function syncSlackThreadReadState(db: Db, token: string, accountId: string) {
+  const { data: rows } = await db.from("threads").select("id, external_id, remote_checked_at").eq("account_id", accountId).eq("unread", true).like("external_id", "%/%")
+    .order("remote_checked_at", { ascending: true, nullsFirst: true }).limit(1);
+  const t = ((rows ?? []) as { id: string; external_id: string }[])[0];
+  if (!t) return 0;
+  const { channel, threadTs } = splitSlackExt(t.external_id);
+  await db.from("threads").update({ remote_checked_at: new Date().toISOString() }).eq("id", t.id);
+  let lastRead: string | undefined;
+  try {
+    const r = await call<{ messages: (Msg & { last_read?: string })[] }>(token, "conversations.replies", { channel, ts: threadTs!, limit: "1" });
+    lastRead = r.messages.find((m) => m.ts === threadTs)?.last_read;
+  } catch { return 0; }
+  if (!lastRead) return 0;
+  const { data: newest } = await db.from("messages").select("external_id").eq("thread_id", t.id).eq("is_outgoing", false).order("sent_at", { ascending: false }).limit(1).maybeSingle();
+  const newestTs = newest ? String(newest.external_id).split(":").pop() ?? "0" : "0";
+  if (parseFloat(newestTs) > parseFloat(lastRead)) return 0;
+  await db.from("threads").update({ unread: false, seen_at: new Date().toISOString() }).eq("id", t.id);
+  return 1;
 }
 
 /**
@@ -306,11 +415,14 @@ export async function slackMark(accountId: string, channel: string, read: boolea
   const granted = tk.scope.split(",");
   if (!SLACK_MARK_SCOPES.some((s) => granted.includes(s))) return false;
   const db = supabaseAdmin();
-  const { data: rows } = await db.from("messages").select("external_id").eq("account_id", accountId).like("external_id", `${channel}:%`).is("thread_ts", null).order("sent_at", { ascending: false }).limit(2);
-  const ts = (rows ?? []).map((r: { external_id: string }) => r.external_id.split(":").pop()!);
-  if (!ts.length) return false;
-  // Unread: back up to just before the newest message.
-  const target = read ? ts[0] : ts[1] ?? (parseFloat(ts[0]) - 0.000001).toFixed(6);
+  if (channel.includes("/")) return false; // Slack has no public API for a thread's read state
+  const { data: rows } = await db.from("messages").select("external_id, is_outgoing").eq("account_id", accountId).like("external_id", `${channel}:%`).is("thread_ts", null).order("sent_at", { ascending: false }).limit(20);
+  const list = (rows ?? []) as { external_id: string; is_outgoing: boolean }[];
+  if (!list.length) return false;
+  const tsOf = (r: { external_id: string }) => r.external_id.split(":").pop()!;
+  // Unread: back up to just before the newest message from someone else (Slack never shows your own messages as unread).
+  const incoming = list.find((r) => !r.is_outgoing) ?? list[0];
+  const target = read ? tsOf(list[0]) : (parseFloat(tsOf(incoming)) - 0.000001).toFixed(6);
   const r = await fetch("https://slack.com/api/conversations.mark", {
     method: "POST", headers: { authorization: `Bearer ${tk.token}`, "content-type": "application/json; charset=utf-8" },
     body: JSON.stringify({ channel, ts: target }),

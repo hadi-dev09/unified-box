@@ -13,7 +13,7 @@ import { MarkSeen } from "../mark-seen";
 import { MessageBody } from "../message-body";
 import { ReaderActions, ScrollToBottom, ScrollToDraft } from "../reader-actions";
 import { SearchBox } from "../search-box";
-import { ChatTimeline, type ChatMsg } from "../chat-timeline";
+import { ChatTimeline, type ChatMsg, type ThreadLinks } from "../chat-timeline";
 import { PaneResizer } from "../pane-resizer";
 import { ScheduledCard } from "../schedule-button";
 import { MenuButton, SyncStatus } from "../shell";
@@ -93,13 +93,33 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
     const self = acct?.external_id ?? "";
     const last = messages.at(-1);
     const isChat = Boolean(acct && !["gmail", "outlook"].includes(acct.provider));
+    // Slack: a thread you're in is its own conversation ("<channel>/<thread ts>"); the channel links to its threads.
+    const [slackChannel, slackThreadTs] = acct?.provider === "slack" ? cur.external_id.split("/") : [cur.external_id, undefined];
+    let timeline = messages as unknown as ChatMsg[];
+    let threadLinks: ThreadLinks = {};
+    let parentHref: string | null = null;
+    if (acct?.provider === "slack" && slackThreadTs) {
+      const [{ data: parent }, { data: chan }] = await Promise.all([
+        sb.from("messages").select("id, from_name, from_addr, sent_at, is_outgoing, body_text, external_id, thread_ts").eq("account_id", cur.account_id).eq("external_id", `${slackChannel}:${slackThreadTs}`).maybeSingle(),
+        sb.from("threads").select("id").eq("account_id", cur.account_id).eq("external_id", slackChannel).maybeSingle(),
+      ]);
+      if (parent) timeline = [{ ...(parent as ChatMsg), thread_ts: null }, ...timeline];
+      if (chan) parentHref = qs({ thread: chan.id, draft: undefined });
+    } else if (acct?.provider === "slack") {
+      const { data: items } = await sb.from("threads").select("id, external_id, unread, last_message_at").eq("account_id", cur.account_id).like("external_id", `${cur.external_id}/%`);
+      const list = (items ?? []) as { id: string; external_id: string; unread: boolean; last_message_at: string }[];
+      const { data: counts } = list.length ? await sb.from("messages").select("thread_id").in("thread_id", list.map((i) => i.id)) : { data: [] };
+      const n = new Map<string, number>();
+      for (const c of (counts ?? []) as { thread_id: string }[]) n.set(c.thread_id, (n.get(c.thread_id) ?? 0) + 1);
+      threadLinks = Object.fromEntries(list.map((i) => [i.external_id.split("/")[1], { href: qs({ thread: i.id, draft: undefined }), count: n.get(i.id) ?? 0, unread: i.unread, last: i.last_message_at }]));
+    }
     const presets: Record<"reply" | "reply_all" | "forward", Preset> = {
       reply: { ...replyRecipients("reply", messages, self), subject: replySubject("reply", cur.subject), body: "" },
       reply_all: { ...replyRecipients("reply_all", messages, self), subject: replySubject("reply_all", cur.subject), body: "" },
       forward: { to: [], cc: [], subject: replySubject("forward", cur.subject), body: last ? `\n${forwardBlock(last)}` : "" },
     };
     const openHref = !acct ? null
-      : acct.provider === "slack" ? `https://slack.com/app_redirect?team=${encodeURIComponent(acct.external_id.split(":")[0])}&channel=${encodeURIComponent(cur.external_id)}`
+      : acct.provider === "slack" ? `https://slack.com/app_redirect?team=${encodeURIComponent(acct.external_id.split(":")[0])}&channel=${encodeURIComponent(slackChannel)}`
       : acct.provider === "gmail" ? `https://mail.google.com/mail/?authuser=${encodeURIComponent(acct.external_id)}#all/${encodeURIComponent(cur.external_id)}`
       : acct.provider === "outlook" ? "https://outlook.office.com/mail/"
       : acct.provider === "whatsapp" ? `https://wa.me/${encodeURIComponent(cur.external_id)}`
@@ -139,7 +159,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 md:px-6">
           <div className="mx-auto max-w-3xl space-y-3">
             {messages.length > 1 && <AiSummary threadId={cur.id} hasKey={hasAiKey} />}
-            {isChat && <ChatTimeline messages={messages as unknown as ChatMsg[]} provider={acct?.provider ?? ""} canReply={Boolean(acct?.can_send)} />}
+            {isChat && <ChatTimeline messages={timeline} provider={acct?.provider ?? ""} canReply={Boolean(acct?.can_send)} threadView={Boolean(slackThreadTs)} threadLinks={threadLinks} parentHref={parentHref} />}
             {isChat && <ScrollToBottom key={messages.length} />}
             {!isChat && messages.map((m, i) => {
               const name = m.is_outgoing ? "You" : m.from_name || m.from_addr || "Unknown";

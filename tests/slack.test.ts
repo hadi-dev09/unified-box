@@ -234,10 +234,45 @@ test("slack read state: reading in Slack clears unread here; marking here moves 
   net = stubFetch((c) => (c.url.endsWith("conversations.mark") ? { ok: true } : undefined));
   try {
     assert.equal(await slackMark("s9", "D9", false), true);
-    assert.equal(JSON.parse(net.calls[0].body).ts, "1700000100.000100", "unread = back up to before the newest message");
+    assert.equal(JSON.parse(net.calls[0].body).ts, "1700000200.000099", "unread = back up to just before the newest message from someone else");
     assert.equal(await slackMark("s9", "D9", true), true);
     assert.equal(JSON.parse(net.calls[1].body).ts, "1700000200.000100");
   } finally { net.restore(); }
   db.rows("account_secrets")[0].tokens_enc = encrypt(JSON.stringify({ access_token: "xoxp-1", scope: "im:history" }));
   assert.equal(await slackMark("s9", "D9", true), false, "without write scopes it doesn't try");
+});
+
+test("slack threads: replies in your threads become their own conversation, with read state from Slack", async () => {
+  const { ingestSlackEvent, syncSlackReadState, slackMark } = await import("../src/lib/slack");
+  const { applyThreadAction } = await import("../src/lib/thread-actions");
+  db.rows("accounts").push({ id: "s8", user_id: A.id, provider: "slack", display_name: "WS", external_id: "T1:U1", status: "connected", can_send: true });
+  db.rows("account_secrets").push({ account_id: "s8", tokens_enc: encrypt(JSON.stringify({ access_token: "xoxp-1", scope: "im:history,chat:write,im:write,channels:write" })) });
+  db.rows("threads").push({ id: "dm8", user_id: A.id, account_id: "s8", external_id: "D8", subject: "DM · Dana", unread: false, last_from: "You", last_message_at: new Date(Date.now() - 3600_000).toISOString() });
+  db.rows("messages").push({ id: "p8", user_id: A.id, account_id: "s8", thread_id: "dm8", external_id: "D8:1700000100.000100", is_outgoing: true, body_text: "Hello!", sent_at: new Date(Date.now() - 3600_000).toISOString() });
+  let net = stubFetch((c) => (c.url.includes("users.info") ? { ok: true, user: { real_name: "Dana" } } : undefined));
+  try {
+    await ingestSlackEvent({ id: "s8", user_id: A.id, external_id: "T1:U1" }, { type: "message", channel: "D8", channel_type: "im", user: "U2", text: "reply one", ts: "1700000200.000100", thread_ts: "1700000100.000100" });
+  } finally { net.restore(); }
+  const item = db.rows("threads").find((t) => t.external_id === "D8/1700000100.000100")!;
+  assert.ok(item, "thread conversation created");
+  assert.equal(item.subject, "Thread in DM · Dana");
+  assert.equal(item.unread, true);
+  assert.equal(db.rows("messages").find((m) => m.external_id === "D8:1700000200.000100")!.thread_id, item.id);
+  assert.equal(db.rows("threads").find((t) => t.id === "dm8")!.unread, false, "the DM itself isn't bumped by a thread reply");
+
+  // Marking a thread read here can't be mirrored to Slack, and says so.
+  net = stubFetch(() => ({ ok: true }));
+  try {
+    assert.equal(await slackMark("s8", item.external_id as string, true), false);
+    const r = await applyThreadAction(A.id, [item.id as string], "read");
+    assert.match(String(r.note), /thread's read state/);
+  } finally { net.restore(); }
+
+  // Read in Slack -> read here (checked through conversations.replies' last_read).
+  item.unread = true;
+  net = stubFetch((c) => c.url.includes("conversations.info") ? { ok: true, channel: { last_read: "1700000100.000100" } }
+    : c.url.includes("conversations.replies") ? { ok: true, messages: [{ ts: "1700000100.000100", last_read: "1700000200.000100" }] } : undefined);
+  try { await syncSlackReadState("s8"); } finally { net.restore(); }
+  assert.equal(item.unread, false);
+  assert.ok(net.calls.every((c) => !c.url.includes("channel=D8%2F")), "thread conversations aren't sent to conversations.info");
 });

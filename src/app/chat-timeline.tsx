@@ -1,9 +1,13 @@
 "use client";
+import Link from "next/link";
 import { LocalTime } from "./local-time";
 import { MessageBody } from "./message-body";
 import { Avatar, Icon } from "./ui";
 
 export type ChatMsg = { id: string; external_id?: string | null; thread_ts?: string | null; from_name: string | null; from_addr: string | null; sent_at: string; is_outgoing: boolean; body_text: string | null };
+
+/** Slack threads that have their own conversation, keyed by the parent message's ts. */
+export type ThreadLinks = Record<string, { href: string; count: number; unread: boolean; last: string }>;
 
 const tsOf = (m: ChatMsg) => (m.external_id ?? "").split(":").pop() ?? "";
 
@@ -11,7 +15,9 @@ const tsOf = (m: ChatMsg) => (m.external_id ?? "").split(":").pop() ?? "";
  * Chat conversations. Slack looks like Slack (name + time header, grouped messages, thread replies, "Reply in thread");
  * WhatsApp/Telegram look like a phone chat (bubbles).
  */
-export function ChatTimeline({ messages, provider, canReply }: { messages: ChatMsg[]; provider: string; canReply: boolean }) {
+export function ChatTimeline({ messages, provider, canReply, threadView = false, threadLinks = {}, parentHref = null }: {
+  messages: ChatMsg[]; provider: string; canReply: boolean; threadView?: boolean; threadLinks?: ThreadLinks; parentHref?: string | null;
+}) {
   const byTs = new Map(messages.map((m) => [tsOf(m), m]));
   const replyInThread = (m: ChatMsg) => {
     const root = m.thread_ts || tsOf(m);
@@ -51,6 +57,12 @@ export function ChatTimeline({ messages, provider, canReply }: { messages: ChatM
 
   return (
     <div className="-mx-2">
+      {threadView && (
+        <p className="mb-2 flex items-center gap-2 px-2 text-xs muted">
+          <Icon name="reply" className="h-3.5 w-3.5" /> Thread
+          {parentHref && <> · <Link href={parentHref} className="font-medium text-[var(--accent-text)] hover:underline">Open the conversation</Link></>}
+        </p>
+      )}
       {messages.map((m, i) => {
         const prev = messages[i - 1];
         const name = m.is_outgoing ? "You" : m.from_name || m.from_addr || "Unknown";
@@ -59,7 +71,12 @@ export function ChatTimeline({ messages, provider, canReply }: { messages: ChatM
         const parent = m.thread_ts ? byTs.get(m.thread_ts) : undefined;
         return (
           <div key={m.id}>
-            {day(m, prev) && <Divider iso={m.sent_at} />}
+            {threadView && i === 1 && (
+              <div className="relative my-3 flex items-center gap-3 px-2 text-xs muted">
+                <span>{messages.length - 1} {messages.length === 2 ? "reply" : "replies"}</span><span className="h-px flex-1 bg-[var(--border)]" />
+              </div>
+            )}
+            {day(m, prev) && !(threadView && i === 1) && <Divider iso={m.sent_at} />}
             <div className={`group/msg relative flex gap-3 rounded-lg px-2 ${grouped ? "py-0.5" : "pb-0.5 pt-2"} hover:bg-[var(--surface-2)]`}>
               <div className="w-9 shrink-0">
                 {grouped
@@ -73,15 +90,28 @@ export function ChatTimeline({ messages, provider, canReply }: { messages: ChatM
                     <span className="text-[11px] muted"><LocalTime iso={m.sent_at} mode="relative" /></span>
                   </p>
                 )}
-                {m.thread_ts && (
+                {m.thread_ts && !threadView && (
                   <p className="mb-0.5 flex items-center gap-1.5 text-[11px] muted">
                     <Icon name="reply" className="h-3 w-3 shrink-0" />
                     <span className="truncate">Replied in thread{parent ? <>: <span className="italic">“{(parent.body_text ?? "").replace(/\s+/g, " ").slice(0, 70)}”</span></> : ""}</span>
                   </p>
                 )}
                 <div className="text-[15px] leading-relaxed">{m.body_text?.trim() ? <MessageBody text={m.body_text} /> : <span className="italic muted">Attachment</span>}</div>
+                {!threadView && threadLinks[tsOf(m)] && (() => { const l = threadLinks[tsOf(m)]; return (
+                  <Link href={l.href} className="mt-1 inline-flex items-center gap-2 rounded-lg border border-transparent px-1.5 py-1 text-xs hover:border-[var(--border)] hover:bg-[var(--surface)]">
+                    <Icon name="reply" className="h-3.5 w-3.5 text-[var(--accent-text)]" />
+                    <span className="font-semibold text-[var(--accent-text)]">{l.count} {l.count === 1 ? "reply" : "replies"}</span>
+                    {l.unread && <span className="h-2 w-2 rounded-full bg-[var(--accent)]" aria-label="unread" />}
+                    <span className="muted">Last reply <LocalTime iso={l.last} mode="relative" /></span>
+                  </Link>
+                ); })()}
               </div>
-              {canReply && (
+              {canReply && !threadView && threadLinks[m.thread_ts || tsOf(m)] ? (
+                <Link href={threadLinks[m.thread_ts || tsOf(m)].href} title="Open thread" aria-label={`Open thread with ${name}`}
+                  className="absolute right-2 top-1 hidden items-center gap-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs font-medium shadow-[var(--shadow)] group-hover/msg:inline-flex group-focus-within/msg:inline-flex">
+                  <Icon name="reply" className="h-3.5 w-3.5" /> Reply in thread
+                </Link>
+              ) : canReply && !threadView && (
                 <button onClick={() => replyInThread(m)} title="Reply in thread" aria-label={`Reply in thread to ${name}`}
                   className="absolute right-2 top-1 hidden items-center gap-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs font-medium shadow-[var(--shadow)] group-hover/msg:inline-flex group-focus-within/msg:inline-flex">
                   <Icon name="reply" className="h-3.5 w-3.5" /> Reply in thread

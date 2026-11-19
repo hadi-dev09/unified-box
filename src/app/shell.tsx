@@ -31,7 +31,7 @@ export function Shell({ sidebar, children, initialCollapsed, status = null }: { 
   return (
     <Ctx.Provider value={{ toggle, collapsed, status }}>
       <NavProgress />
-      <div className="flex h-dvh overflow-hidden">
+      <div className="flex h-dvh overflow-clip">
         <aside className={`${collapsed ? "md:hidden" : "md:flex"} hidden w-[264px] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--surface)]`}>
           {sidebar}
         </aside>
@@ -41,7 +41,7 @@ export function Shell({ sidebar, children, initialCollapsed, status = null }: { 
             <aside className="relative flex h-full w-[280px] max-w-[85vw] flex-col bg-[var(--surface)] shadow-xl">{sidebar}</aside>
           </div>
         )}
-        <div className="flex min-w-0 flex-1 flex-col">{children}</div>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-clip">{children}</div>
       </div>
     </Ctx.Provider>
   );
