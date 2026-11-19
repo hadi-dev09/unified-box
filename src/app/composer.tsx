@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { parseAddressField } from "@/lib/reply";
 import { AiHelper } from "./ai-helper";
+import { confirmNoPlaceholder } from "./placeholder";
 import { ScheduleButton, whenLabel } from "./schedule-button";
 import { Icon } from "./ui";
 
@@ -36,6 +37,14 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
   const [busy, setBusy] = useState(false); const [err, setErr] = useState<string | null>(null); const [done, setDone] = useState<string | null>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const [savedNote, setSavedNote] = useState<string | null>(null);
+  const [inThread, setInThread] = useState<{ ts: string; preview: string } | null>(null);
+  // "Reply in thread" on a Slack message points the next message at that thread.
+  useEffect(() => {
+    const on = (e: Event) => { setInThread((e as CustomEvent).detail ?? null); setTimeout(() => bodyRef.current?.focus({ preventScroll: true }), 30); };
+    window.addEventListener("ub:reply-thread", on);
+    return () => window.removeEventListener("ub:reply-thread", on);
+  }, []);
+  useEffect(() => { setInThread(null); }, [threadId]);
   const isChat = provider === "whatsapp" || provider === "telegram" || provider === "slack";
   const restored = useRef<string | null>(null);
   const lastSaved = useRef<string>("");
@@ -97,6 +106,7 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
     if (t.invalid.length || c.invalid.length) return setErr(`Not a valid email: ${[...t.invalid, ...c.invalid].join(", ")}`);
     if (!t.valid.length) return setErr("Add at least one recipient");
     if (!body.trim()) return setErr("Write a message first");
+    if (!confirmNoPlaceholder(body)) return;
     setBusy(true); setErr(null);
     try {
       const res = await fetch("/api/compose", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ thread_id: threadId, mode, to: t.valid, cc: c.valid, subject, body, send: true, ...(sendAt ? { send_at: sendAt } : {}) }) });
@@ -109,12 +119,13 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
 
   async function sendChat(sendAt?: string) {
     if (!body.trim()) return setErr("Write a message first");
+    if (!confirmNoPlaceholder(body)) return;
     setBusy(true); setErr(null); setDone(null);
     try {
-      const res = await fetch("/api/compose", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ thread_id: threadId, body, send: true, ...(sendAt ? { send_at: sendAt } : {}) }) });
+      const res = await fetch("/api/compose", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ thread_id: threadId, body, send: true, ...(sendAt ? { send_at: sendAt } : {}), ...(inThread ? { reply_to: inThread.ts } : {}) }) });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) return setErr(j.error ?? `Failed (${res.status})`);
-      setBody(""); setSavedNote(null); lastSaved.current = ""; setDone(sendAt ? `Scheduled for ${whenLabel(sendAt)}` : "Sent"); router.refresh();
+      setInThread(null); setBody(""); setSavedNote(null); lastSaved.current = ""; setDone(sendAt ? `Scheduled for ${whenLabel(sendAt)}` : "Sent"); router.refresh();
     } finally { setBusy(false); }
   }
 
@@ -123,10 +134,16 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
     return (
       <form className="space-y-2" onSubmit={(e) => { e.preventDefault(); sendChat(); }}>
         {canSend && <AiHelper threadId={threadId} hasKey={hasAiKey} text={body} setText={setBody} />}
+        {inThread && (
+          <div className="flex items-center gap-2 rounded-lg bg-[var(--surface-2)] px-3 py-1.5 text-xs">
+            <Icon name="reply" className="h-3.5 w-3.5 shrink-0" /><span className="min-w-0 flex-1 truncate">Replying in thread: <span className="muted">{inThread.preview}</span></span>
+            <button type="button" onClick={() => setInThread(null)} aria-label="Cancel thread reply" className="muted hover:text-[var(--text)]"><Icon name="close" className="h-3.5 w-3.5" /></button>
+          </div>
+        )}
         <label htmlFor="c-chat" className="sr-only">Message</label>
         <div className="flex items-end gap-2">
           <textarea id="c-chat" ref={bodyRef} rows={2} className={`${field} min-h-11 resize-y`} value={body} maxLength={4096} disabled={!canSend}
-            onChange={(e) => setBody(e.target.value)} placeholder={canSend ? `Message on ${appName}…` : `Connected read-only. Reconnect to reply here.`}
+            onChange={(e) => setBody(e.target.value)} placeholder={canSend ? (inThread ? "Reply in thread…" : `Message on ${appName}…`) : `Connected read-only. Reconnect to reply here.`}
             onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) (e.currentTarget.form as HTMLFormElement).requestSubmit(); }} />
           <button disabled={busy || !canSend} className="btn-primary !py-2.5">{busy ? "Sending…" : "Send"}</button>
           {canSend && <ScheduleButton disabled={busy || !body.trim()} onPick={(iso) => sendChat(iso)} />}

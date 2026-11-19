@@ -57,6 +57,7 @@ export function seedDemo(db: FakeDb) {
   db.rows("messages").push(
     { id: "m-t12-1", user_id: u, account_id: "a4", thread_id: "t12", external_id: "D777:1700000001.0001", from_addr: "U9", from_name: "Abdul Hadi", to_addrs: [], subject: "DM", body_text: "hey, are you around?", sent_at: ago(40), is_outgoing: false },
     { id: "m-t12-2", user_id: u, account_id: "a4", thread_id: "t12", external_id: "D777:1700000002.0001", from_addr: "U9", from_name: "Abdul Hadi", to_addrs: [], subject: "DM", body_text: "need the deploy link", sent_at: ago(39), is_outgoing: false },
+    { id: "m-t12-4", user_id: u, account_id: "a4", thread_id: "t12", external_id: "D777:1700000004.0001", thread_ts: "1700000002.0001", from_addr: "U9", from_name: "Abdul Hadi", to_addrs: [], subject: "DM", body_text: "the staging one please", sent_at: ago(14), is_outgoing: false },
     { id: "m-t12-3", user_id: u, account_id: "a4", thread_id: "t12", external_id: "D777:1700000003.0001", from_addr: "U1", from_name: "You", to_addrs: [], subject: "DM", body_text: "hello", sent_at: ago(15), is_outgoing: true },
   );
   db.rows("threads").push({ id: "t11", user_id: u, account_id: "a4", external_id: "C123", subject: "#client-greenbridge", snippet: "Deploy looks good, ship it?", last_message_at: ago(20), unread: true, needs_reply: true, last_from: "Dana", client_id: "c1", starred: true });

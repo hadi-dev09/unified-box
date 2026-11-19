@@ -2,10 +2,11 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Fragment, useEffect, useRef, useState } from "react";
+import { confirmNoPlaceholder, fillNameClient } from "./placeholder";
 import { channel, Icon, ProviderIcon } from "./ui";
 
 type Ref = { id: string; title: string; provider: string; who: string };
-type Turn = { role: "user" | "assistant"; text: string; refs?: Record<string, Ref>; error?: boolean };
+type Turn = { role: "user" | "assistant"; text: string; refs?: Record<string, Ref>; error?: boolean; me?: string };
 const STORE = "ub_ai_chat";
 
 /** Splits an answer into text and <reply to="T3">…</reply> blocks (an unfinished block shows as "writing"). */
@@ -63,6 +64,7 @@ function ReplyCard({ refInfo, body, done, hrefFor }: { refInfo?: Ref; body: stri
   useEffect(() => { setText(body); }, [body]);
   const go = async (action: "send" | "draft") => {
     if (!refInfo) return;
+    if (action === "send" && !confirmNoPlaceholder(text)) return;
     setState("busy");
     const r = await fetch("/api/quick-reply", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ thread_id: refInfo.id, body: text, action }) });
     const j = await r.json().catch(() => ({}));
@@ -128,7 +130,7 @@ export function AiPanel() {
         setTurns((t) => [...t.slice(0, -1), { role: "assistant", text: j.error ?? "Something went wrong.", error: true }]);
         return;
       }
-      const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = ""; let refs: Record<string, Ref> = {}; let acc = "";
+      const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = ""; let refs: Record<string, Ref> = {}; let acc = ""; let me = "";
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -136,12 +138,12 @@ export function AiPanel() {
         const lines = buf.split("\n"); buf = lines.pop() ?? "";
         for (const line of lines) {
           if (!line.trim()) continue;
-          const ev = JSON.parse(line) as { type: string; refs?: Record<string, Ref>; text?: string; error?: string };
-          if (ev.type === "refs") refs = ev.refs ?? {};
+          const ev = JSON.parse(line) as { type: string; refs?: Record<string, Ref>; text?: string; error?: string; me?: string };
+          if (ev.type === "refs") { refs = ev.refs ?? {}; me = ev.me ?? ""; }
           if (ev.type === "text") acc += ev.text ?? "";
           if (ev.type === "error") { setTurns((t) => [...t.slice(0, -1), { role: "assistant", text: ev.error ?? "Failed", error: true }]); return; }
           const snapshot = acc;
-          setTurns((t) => [...t.slice(0, -1), { role: "assistant", text: snapshot, refs }]);
+          setTurns((t) => [...t.slice(0, -1), { role: "assistant", text: snapshot, refs, me }]);
         }
       }
     } catch (e) {
@@ -183,7 +185,7 @@ export function AiPanel() {
                   : t.error ? t.text
                   : parts(t.text).map((p, j) => p.kind === "text"
                       ? <Rich key={j} text={p.text} refs={t.refs ?? {}} hrefFor={hrefFor} />
-                      : <ReplyCard key={j} refInfo={(t.refs ?? {})[p.ref]} body={p.body} done={p.done} hrefFor={hrefFor} />)}
+                      : <ReplyCard key={j} refInfo={(t.refs ?? {})[p.ref]} body={fillNameClient(p.body, t.me ?? "")} done={p.done} hrefFor={hrefFor} />)}
               </div>
             ))}
           </div>

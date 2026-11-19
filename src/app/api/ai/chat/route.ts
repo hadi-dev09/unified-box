@@ -18,13 +18,13 @@ export async function POST(req: NextRequest) {
   const question = turns.at(-1)?.role === "user" ? turns.at(-1)!.text.trim() : "";
   if (!question) return NextResponse.json({ error: "Ask something first" }, { status: 400 });
   const threadId = typeof b.thread_id === "string" && b.thread_id ? b.thread_id : null;
-  const { context, refs } = await buildChatContext(user.id, question, threadId);
+  const { context, refs } = await buildChatContext(user.id, question, threadId, { name: user.name, email: user.email });
 
   const enc = new TextEncoder();
   const body = new ReadableStream({
     async start(ctl) {
       const send = (o: unknown) => ctl.enqueue(enc.encode(JSON.stringify(o) + "\n"));
-      send({ type: "refs", refs });
+      send({ type: "refs", refs, me: user.name });
       const r = await streamChat(user.id, turns, context, (t) => send({ type: "text", text: t }));
       send(r.ok ? { type: "done" } : { type: "error", error: r.error, needsKey: r.needsKey ?? false });
       ctl.close();

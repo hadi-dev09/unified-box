@@ -13,6 +13,7 @@ import { MarkSeen } from "../mark-seen";
 import { MessageBody } from "../message-body";
 import { ReaderActions, ScrollToBottom, ScrollToDraft } from "../reader-actions";
 import { SearchBox } from "../search-box";
+import { ChatTimeline, type ChatMsg } from "../chat-timeline";
 import { PaneResizer } from "../pane-resizer";
 import { ScheduledCard } from "../schedule-button";
 import { MenuButton, SyncStatus } from "../shell";
@@ -38,11 +39,15 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   const view: View = (VIEWS as readonly string[]).includes(sp.f ?? "") ? (sp.f as View) : "all";
   const q = cleanQuery(sp.q);
 
+  // Start every independent query at once (fewer round trips = faster page).
+  const aiKeyP = thread ? aiKeyInfo(user.id) : Promise.resolve(null);
+  const draftRowsP = sb.from("drafts").select("thread_id").eq("user_id", user.id).eq("status", "pending").not("thread_id", "is", null).limit(500);
+  const searchP = q ? matchingThreadIds(sb, user.id, q) : Promise.resolve(null);
   const { accounts, clients, perAcct, unreadTotal, replyTotal } = await inboxSummary();
   const provider = sp.provider && accounts.some((a) => a.provider === sp.provider) ? sp.provider : undefined;
   const acctById = new Map(accounts.map((a) => [a.id, a]));
 
-  const searchIds = q ? await matchingThreadIds(sb, user.id, q) : null;
+  const searchIds = await searchP;
   let tq = sb.from("threads").select("id, subject, snippet, last_message_at, unread, needs_reply, last_from, account_id, starred, snoozed_until, trashed_at, clients(name)").eq("user_id", user.id).order("last_message_at", { ascending: false }).limit(150);
   if (view === "trash") tq = tq.not("trashed_at", "is", null);
   else {
@@ -59,18 +64,18 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
 
   const [{ data: threadRows }, { data: msgRows }, { data: cur }, { data: aiDrafts }] = await Promise.all([
     tq,
-    thread ? sb.from("messages").select("id, from_name, from_addr, to_addrs, cc_addrs, sent_at, is_outgoing, body_text, subject").eq("thread_id", thread).order("sent_at") : Promise.resolve({ data: null }),
+    thread ? sb.from("messages").select("id, from_name, from_addr, to_addrs, cc_addrs, sent_at, is_outgoing, body_text, subject, external_id, thread_ts").eq("thread_id", thread).order("sent_at") : Promise.resolve({ data: null }),
     thread ? sb.from("threads").select("id, subject, client_id, unread, external_id, account_id, starred").eq("id", thread).maybeSingle() : Promise.resolve({ data: null }),
     thread ? sb.from("drafts").select("id, subject, body, to_addrs, cc_addrs, created_by, status, send_at, mode, created_at").eq("thread_id", thread).in("status", ["pending", "scheduled"]).order("created_at") : Promise.resolve({ data: null }),
   ]);
   const threads = (threadRows ?? []) as unknown as ThreadRow[];
-  const hasAiKey = thread ? Boolean(await aiKeyInfo(user.id)) : false;
+  const hasAiKey = Boolean(await aiKeyP);
   const messages = (msgRows ?? []) as (Msg & { id: string })[];
   const mine = ((aiDrafts ?? []) as { status: string; created_by: string; send_at: string | null; mode: string; to_addrs: string[]; cc_addrs: string[] | null; subject: string; body: string; created_at: string }[])
     .find((d) => d.status === "pending" && d.created_by === "user" && !d.send_at);
   const savedDraft: SavedDraft | null = mine ? { mode: (["reply", "reply_all", "forward"].includes(mine.mode) ? mine.mode : "reply") as SavedDraft["mode"], to: mine.to_addrs, cc: mine.cc_addrs ?? [], subject: mine.subject, body: mine.body, savedAt: mine.created_at } : null;
   // Conversations with a reply you started but didn't send get a "Draft" tag in the list.
-  const { data: draftRows } = await sb.from("drafts").select("thread_id").eq("user_id", user.id).eq("status", "pending").not("thread_id", "is", null).limit(500);
+  const { data: draftRows } = await draftRowsP;
   const draftThreads = new Set(((draftRows ?? []) as { thread_id: string }[]).map((d) => d.thread_id));
 
   const qs = (o: Partial<Search>) => {
@@ -134,24 +139,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 md:px-6">
           <div className="mx-auto max-w-3xl space-y-3">
             {messages.length > 1 && <AiSummary threadId={cur.id} hasKey={hasAiKey} />}
-            {isChat && messages.map((m, i) => {
-              const prev = messages[i - 1];
-              const sameAuthor = prev && prev.is_outgoing === m.is_outgoing && (prev.from_name ?? prev.from_addr) === (m.from_name ?? m.from_addr) && new Date(m.sent_at).getTime() - new Date(prev.sent_at).getTime() < 5 * 60_000;
-              const newDay = !prev || new Date(prev.sent_at).toDateString() !== new Date(m.sent_at).toDateString();
-              return (
-                <div key={m.id}>
-                  {newDay && <p className="my-3 text-center text-[11px] font-semibold uppercase tracking-wider muted"><LocalTime iso={m.sent_at} mode="day" /></p>}
-                  <div className={`flex items-end gap-2 ${m.is_outgoing ? "flex-row-reverse" : ""} ${sameAuthor ? "-mt-1.5" : ""}`}>
-                    <span className={sameAuthor ? "invisible" : ""}><Avatar name={m.from_name || m.from_addr || "?"} you={m.is_outgoing} size="sm" /></span>
-                    <div className={`max-w-[80%] rounded-2xl px-3.5 py-2 ${m.is_outgoing ? "rounded-br-md bg-[var(--accent)] text-white" : "rounded-bl-md bg-[var(--surface-2)]"}`}>
-                      {!sameAuthor && !m.is_outgoing && <p className="mb-0.5 text-xs font-semibold">{m.from_name || m.from_addr}</p>}
-                      <div className={`text-sm leading-relaxed ${m.is_outgoing ? "[&_a]:text-white [&_a]:underline" : ""}`}>{m.body_text?.trim() ? <MessageBody text={m.body_text} /> : <span className="italic opacity-70">Attachment</span>}</div>
-                      <p className={`mt-0.5 text-right text-[10px] ${m.is_outgoing ? "text-white/70" : "muted"}`}><LocalTime iso={m.sent_at} /></p>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+            {isChat && <ChatTimeline messages={messages as unknown as ChatMsg[]} provider={acct?.provider ?? ""} canReply={Boolean(acct?.can_send)} />}
             {isChat && <ScrollToBottom key={messages.length} />}
             {!isChat && messages.map((m, i) => {
               const name = m.is_outgoing ? "You" : m.from_name || m.from_addr || "Unknown";

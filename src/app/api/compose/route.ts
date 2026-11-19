@@ -59,6 +59,7 @@ export async function POST(req: NextRequest) {
   const { data: d, error } = await db.from("drafts").insert({
     user_id: user.id, account_id: t.account_id, thread_id: t.id, mode, to_addrs: to, cc_addrs: cc,
     subject, body, created_by: "user", ...(sendAt ? { status: "scheduled", send_at: sendAt } : {}),
+    ...(acct.provider === "slack" && typeof b.reply_to === "string" && /^\d{6,12}\.\d{1,8}$/.test(b.reply_to) ? { reply_to: b.reply_to } : {}),
   }).select("id").single();
   if (error || !d) return bad("could not save", 500);
   const dropSaved = () => db.from("drafts").delete().eq("user_id", user.id).eq("thread_id", t.id).eq("status", "pending").eq("created_by", "user").is("send_at", null).neq("id", d.id);

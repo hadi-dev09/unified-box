@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AI_TASKS, runAssist, type AiTask } from "@/lib/ai-assist";
+import { AI_TASKS, fillName, runAssist, type AiTask } from "@/lib/ai-assist";
 import { currentUser } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
@@ -22,7 +22,8 @@ export async function POST(req: NextRequest) {
   const { data: msgs } = await db.from("messages").select("from_name, from_addr, is_outgoing, sent_at, body_text").eq("thread_id", t.id).eq("user_id", user.id).order("sent_at").limit(60);
   const r = await runAssist(user.id, {
     task, provider: (t.accounts as unknown as { provider: string } | null)?.provider ?? "gmail", subject: t.subject ?? "",
-    messages: msgs ?? [], instructions, text,
+    messages: msgs ?? [], instructions, text, me: { name: user.name, email: user.email },
   });
+  if (r.ok) r.text = fillName(r.text, user.name);
   return NextResponse.json(r, { status: r.ok ? 200 : r.needsKey ? 412 : 502 });
 }

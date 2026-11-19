@@ -91,7 +91,7 @@ async function deliverDraft(userId: string, d: Record<string, any>): Promise<Res
         sentId = `${t.external_id}:${(await telegramSend(d.account_id, t.external_id, text)).id}`;
       } else if (prov === "slack") {
         const { slackSend } = await import("./slack");
-        sentId = `${t.external_id}:${(await slackSend(d.account_id, t.external_id, text)).ts}`;
+        sentId = `${t.external_id}:${(await slackSend(d.account_id, t.external_id, text, (d.reply_to as string | null) ?? null)).ts}`;
       } else throw new Error("Unsupported account");
       // Show the sent message in the conversation right away.
       const now = new Date().toISOString();
@@ -99,6 +99,7 @@ async function deliverDraft(userId: string, d: Record<string, any>): Promise<Res
       const { storeConversation } = await import("./sync");
       const { loadRules } = await import("./clients");
       await storeConversation(acct, t.external_id, [out], false, await loadRules(userId), t.subject ?? undefined);
+      if (prov === "slack" && d.reply_to) await db.from("messages").update({ thread_ts: d.reply_to }).eq("account_id", d.account_id).eq("external_id", sentId);
     }
     await db.from("drafts").update({ status: "sent" }).eq("id", draftId);
     await db.from("audit_log").insert({ user_id: userId, actor: "system", action: "draft.sent", target: draftId });

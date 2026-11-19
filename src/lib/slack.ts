@@ -60,13 +60,13 @@ async function call<T = Record<string, unknown>>(token: string, method: string, 
 }
 
 /** Posts a message into a conversation as the signed-in user (only after they asked for it in the app). Returns the message ts. */
-export async function slackSend(accountId: string, channel: string, text: string): Promise<{ ts: string }> {
+export async function slackSend(accountId: string, channel: string, text: string, threadTs?: string | null): Promise<{ ts: string }> {
   const { data: sec } = await supabaseAdmin().from("account_secrets").select("tokens_enc").eq("account_id", accountId).single();
   if (!sec) throw new Error("No stored tokens");
   const token = (JSON.parse(decrypt(sec.tokens_enc)) as { access_token: string }).access_token;
   const r = await fetch("https://slack.com/api/chat.postMessage", {
     method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json; charset=utf-8" },
-    body: JSON.stringify({ channel, text, unfurl_links: true }),
+    body: JSON.stringify({ channel, text, unfurl_links: true, ...(threadTs ? { thread_ts: threadTs } : {}) }),
   });
   if (r.status === 429) throw new Error("Slack is rate limiting messages. Try again in a minute.");
   const j = (await r.json()) as { ok: boolean; error?: string; ts?: string };
@@ -177,6 +177,7 @@ export async function syncSlack(accountId: string) {
         from_addr: m.user ?? m.bot_id ?? "", from_name: m.user ? names[m.user] : m.username ?? "Bot",
         to_addrs: [], subject: title, body_text: slackTextToPlain(m.text ?? "", names).slice(0, 20_000),
         sent_at: slackTsToIso(m.ts!), is_outgoing: m.user === selfId,
+        thread_ts: m.thread_ts && m.thread_ts !== m.ts ? m.thread_ts : null,
       })), { onConflict: "account_id,external_id" });
       if (e2) throw new Error(e2.message);
       synced += msgs.length;
@@ -205,7 +206,7 @@ export function validSlackSignature(raw: string, ts: string | null, sig: string 
   return want.length === got.length && timingSafeEqual(want, got);
 }
 
-type SlackEvent = { type: string; subtype?: string; channel?: string; channel_type?: string; user?: string; bot_id?: string; username?: string; text?: string; ts?: string; message?: { user?: string; text?: string; ts?: string } };
+type SlackEvent = { type: string; subtype?: string; channel?: string; channel_type?: string; user?: string; bot_id?: string; username?: string; text?: string; ts?: string; thread_ts?: string; message?: { user?: string; text?: string; ts?: string } };
 
 /** Stores one pushed Slack message into the right conversation, immediately (no polling, no rate limit). */
 export async function ingestSlackEvent(acct: { id: string; user_id: string; external_id: string }, ev: SlackEvent) {
@@ -250,6 +251,7 @@ export async function ingestSlackEvent(acct: { id: string; user_id: string; exte
     user_id: acct.user_id, account_id: acct.id, thread_id: t.id, external_id: `${ev.channel}:${ev.ts}`,
     from_addr: ev.user ?? ev.bot_id ?? "", from_name: ev.user ? names[ev.user] : ev.username ?? "Bot", to_addrs: [], subject: title,
     body_text: text.slice(0, 20_000), sent_at: at, is_outgoing: mine,
+    thread_ts: ev.thread_ts && ev.thread_ts !== ev.ts ? ev.thread_ts : null,
   }, { onConflict: "account_id,external_id" });
   await db.from("accounts").update({ last_synced_at: new Date().toISOString(), status: "connected", status_detail: null }).eq("id", acct.id);
   return true;
@@ -285,7 +287,8 @@ export async function syncSlackReadState(accountId: string, maxConvs = 30) {
     }
     checked++;
     if (!lastRead) continue;
-    const { data: newest } = await db.from("messages").select("external_id, is_outgoing").eq("thread_id", t.id).eq("is_outgoing", false).order("sent_at", { ascending: false }).limit(1).maybeSingle();
+    // Thread replies have their own read state in Slack; compare only messages in the main conversation.
+    const { data: newest } = await db.from("messages").select("external_id, is_outgoing").eq("thread_id", t.id).eq("is_outgoing", false).is("thread_ts", null).order("sent_at", { ascending: false }).limit(1).maybeSingle();
     const newestTs = newest ? String(newest.external_id).split(":").pop() ?? "0" : "0";
     const unread = t.last_from !== "You" && parseFloat(newestTs) > parseFloat(lastRead);
     if (unread !== t.unread) { await db.from("threads").update({ unread, ...(unread ? {} : { seen_at: new Date().toISOString() }) }).eq("id", t.id); changed++; }
@@ -303,7 +306,7 @@ export async function slackMark(accountId: string, channel: string, read: boolea
   const granted = tk.scope.split(",");
   if (!SLACK_MARK_SCOPES.some((s) => granted.includes(s))) return false;
   const db = supabaseAdmin();
-  const { data: rows } = await db.from("messages").select("external_id").eq("account_id", accountId).like("external_id", `${channel}:%`).order("sent_at", { ascending: false }).limit(2);
+  const { data: rows } = await db.from("messages").select("external_id").eq("account_id", accountId).like("external_id", `${channel}:%`).is("thread_ts", null).order("sent_at", { ascending: false }).limit(2);
   const ts = (rows ?? []).map((r: { external_id: string }) => r.external_id.split(":").pop()!);
   if (!ts.length) return false;
   // Unread: back up to just before the newest message.

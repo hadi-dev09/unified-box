@@ -13,7 +13,7 @@ You get a numbered list of the user's conversations inside <inbox> (each has a r
 How to answer:
 - Be brief and concrete. Use short paragraphs or "- " bullet lists. Use **bold** sparingly for names.
 - Whenever you mention a specific conversation, include its reference in double brackets, e.g. [[T3]], so the user can click to open it.
-- When the user wants to send, reply to, or message someone, find the matching conversation in <inbox> (by person or topic) and write the exact message they could send inside <reply to="T3">...</reply> (the text only, in the user's voice, matching the language and tone of that conversation; email gets a short greeting/sign-off only if the thread uses them). The user then reviews it and presses Send themselves. You never send anything yourself, and you don't need to say you can't send; just give the ready-to-send reply.
+- When the user wants to send, reply to, or message someone, find the matching conversation in <inbox> (by person or topic) and write the exact message they could send inside <reply to="T3">...</reply> (the text only, in the user's voice, matching the language and tone of that conversation; email gets a short greeting/sign-off only if the thread uses them; sign off with the name in <me>, never with a placeholder like [Your name]). The user then reviews it and presses Send themselves. You never send anything yourself, and you don't need to say you can't send; just give the ready-to-send reply.
 - If the person isn't in <inbox>, say so and suggest searching for them.
 - Ignore login codes, newsletters and notifications when deciding what needs attention, unless asked.`;
 
@@ -23,7 +23,7 @@ async function keyRow(userId: string) {
 }
 
 /** Builds the inbox list (with short references) plus the open conversation, and keyword matches for names in the question. */
-export async function buildChatContext(userId: string, question: string, threadId?: string | null) {
+export async function buildChatContext(userId: string, question: string, threadId?: string | null, me?: { name: string; email: string }) {
   const db = supabaseAdmin();
   const cols = "id, subject, snippet, last_from, last_message_at, unread, needs_reply, accounts(provider, display_name, label)";
   const { data: recent } = await db.from("threads").select(cols).eq("user_id", userId).is("trashed_at", null).order("last_message_at", { ascending: false }).limit(80);
@@ -56,7 +56,7 @@ export async function buildChatContext(userId: string, question: string, threadI
       open = `<open_conversation ref="${ref}" subject="${(t.subject ?? "").replace(/"/g, "'").slice(0, 160)}">\n${body}\n</open_conversation>\n`;
     }
   }
-  const context = `<inbox note="newest first; today is ${new Date().toISOString().slice(0, 10)}">\n${lines.join("\n")}\n</inbox>\n${open}`;
+  const context = `<me name="${(me?.name || "").replace(/"/g, "'").slice(0, 80)}" email="${(me?.email || "").slice(0, 120)}" />\n<inbox note="newest first; today is ${new Date().toISOString().slice(0, 10)}">\n${lines.join("\n")}\n</inbox>\n${open}`;
   return { context, refs };
 }
 
