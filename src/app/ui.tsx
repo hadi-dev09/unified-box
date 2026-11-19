@@ -51,7 +51,7 @@ export function ProviderIcon({ provider, className = "h-4 w-4" }: { provider?: s
 }
 
 export type IconName = "menu" | "search" | "close" | "back" | "reply" | "replyAll" | "forward" | "external" | "inbox" | "check" | "spark" | "settings" | "plug" | "logout"
-  | "star" | "starFill" | "trash" | "clock" | "mail" | "mailOpen" | "pencil" | "chevron" | "chevronRight" | "sun" | "moon" | "monitor" | "users" | "more" | "plus" | "copy" | "shield";
+  | "star" | "starFill" | "trash" | "clock" | "mail" | "mailOpen" | "pencil" | "chevron" | "chevronRight" | "sun" | "moon" | "monitor" | "users" | "more" | "plus" | "copy" | "shield" | "hash" | "chat";
 export function Icon({ name, className = "h-4 w-4" }: { name: IconName; className?: string }) {
   const p: Record<string, React.ReactNode> = {
     menu: <path d="M4 6h16M4 12h16M4 18h16" />,
@@ -59,6 +59,8 @@ export function Icon({ name, className = "h-4 w-4" }: { name: IconName; classNam
     close: <path d="M6 6l12 12M18 6 6 18" />,
     back: <path d="M15 18l-6-6 6-6" />,
     reply: <path d="M9 14 4 9l5-5M4 9h11a5 5 0 0 1 5 5v5" />,
+    hash: <path d="M5 9h14M5 15h14M10 4 8 20M16 4l-2 16" />,
+    chat: <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z" />,
     replyAll: <><path d="M11 14 6 9l5-5M6 9h9a5 5 0 0 1 5 5v5" /><path d="M7 14 2 9l5-5" /></>,
     forward: <path d="m15 14 5-5-5-5M20 9H9a5 5 0 0 0-5 5v5" />,
     external: <><path d="M14 4h6v6M20 4l-9 9" /><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></>,

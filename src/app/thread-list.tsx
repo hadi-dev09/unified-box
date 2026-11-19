@@ -18,6 +18,21 @@ const SNOOZE = [
   { label: "Next week (Mon 9:00 AM)", at: () => { const d = new Date(); d.setDate(d.getDate() + ((8 - d.getDay()) % 7 || 7)); d.setHours(9, 0, 0, 0); return d; } },
 ];
 
+/**
+ * Slack rows read like Slack's Activity view: the person on top, and under the message where it was posted
+ * ("Direct message", "#general", "Thread in Direct message", "Thread in #general").
+ */
+function slackRow(t: ListThread) {
+  const subject = t.subject ?? "";
+  const thread = subject.startsWith("Thread in ");
+  const base = thread ? subject.slice("Thread in ".length) : subject;
+  const dm = base.match(/^DM · (.+)$/);
+  const group = base.startsWith("Group DM");
+  const place = dm ? "Direct message" : group ? "Group message" : base;
+  const person = t.last_from && t.last_from !== "You" ? t.last_from : dm ? dm[1] : base;
+  return { who: person || "(unknown)", where: thread ? `Thread in ${place}` : place, thread, channel: !dm && !group };
+}
+
 async function act(ids: string[], action: string, until?: string) {
   const r = await fetch("/api/threads", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids, action, until }) });
   return (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string; note?: string; count?: number };
@@ -89,7 +104,8 @@ export function ThreadList({ threads, activeId, hrefFor, showChannel, view }: {
         {rows.map((t) => {
           const active = activeId === t.id;
           const isChat = Boolean(t.provider && !["gmail", "outlook"].includes(t.provider));
-          const who = isChat ? t.subject || t.last_from || "(unknown)" : t.last_from || "(unknown)";
+          const slack = t.provider === "slack" ? slackRow(t) : null;
+          const who = slack ? slack.who : isChat ? t.subject || t.last_from || "(unknown)" : t.last_from || "(unknown)";
           const checked = sel.has(t.id);
           return (
             <li key={t.id} className="group/row relative">
@@ -111,13 +127,18 @@ export function ThreadList({ threads, activeId, hrefFor, showChannel, view }: {
                     <span className={`ml-auto shrink-0 text-xs tabular-nums group-hover/row:invisible ${t.unread ? "font-semibold text-[var(--accent-text)]" : "muted"}`}><LocalTime iso={t.last_message_at} /></span>
                   </div>
                   {!isChat && <p className={`truncate text-sm ${t.unread ? "font-semibold" : "text-[var(--text)]/75"}`}>{t.subject || "(no subject)"}</p>}
-                  <p className="truncate text-[13px] muted">{isChat && t.last_from === "You" ? "You: " : ""}{t.snippet}</p>
-                  {(showChannel || t.client || t.needs_reply || t.snoozed_until || t.hasDraft) && (
+                  <p className={`truncate text-[13px] ${slack && t.unread ? "text-[var(--text)]" : "muted"}`}>{isChat && t.last_from === "You" ? "You: " : ""}{t.snippet}</p>
+                  {slack && (
+                    <p className="mt-1 flex items-center gap-1 truncate text-xs muted">
+                      <Icon name={slack.thread ? "reply" : slack.channel ? "hash" : "chat"} className="h-3 w-3 shrink-0" />
+                      <span className="truncate">{slack.where}</span>
+                    </p>
+                  )}
+                  {(showChannel || t.client || t.snoozed_until || t.hasDraft) && (
                     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                       {showChannel && <ChannelTag provider={t.provider} label={t.accountLabel} />}
                       {t.client && <span className="chip bg-violet-500/12 text-violet-700 dark:text-violet-300">{t.client}</span>}
                       {t.hasDraft && <span className="chip bg-red-500/12 text-red-700 dark:text-red-300"><Icon name="pencil" className="h-3 w-3" />Draft</span>}
-                      {t.needs_reply && <span className="chip bg-amber-500/15 text-amber-700 dark:text-amber-300">Needs reply</span>}
                       {t.snoozed_until && <span className="chip bg-sky-500/12 text-sky-700 dark:text-sky-300"><Icon name="clock" className="h-3 w-3" />Until <LocalTime iso={t.snoozed_until} /></span>}
                     </div>
                   )}

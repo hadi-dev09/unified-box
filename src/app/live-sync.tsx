@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { createBrowserClient } from "@supabase/ssr";
 
 const POLL_MS = 20_000;
 
@@ -51,6 +52,20 @@ export function LiveSync({ enabled, lastSyncedAt }: { enabled: boolean; lastSync
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
     return () => { clearInterval(poll); clearInterval(tick); document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("focus", onVisible); };
+  }, [enabled, check]);
+
+  // Instant updates: the database tells this tab the moment one of your conversations changes (new message, read in
+  // Slack, …), so the screen refreshes within a second instead of waiting for the 20s check. Row-level security
+  // limits this to your own conversations.
+  useEffect(() => {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL, key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!enabled || !url || !key || url.includes("fake.supabase")) return;
+    const sb = createBrowserClient(url, key);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ch = sb.channel("ub-live").on("postgres_changes", { event: "*", schema: "public", table: "threads" }, () => {
+      clearTimeout(timer); timer = setTimeout(() => { busy.current = false; check(); }, 300);
+    }).subscribe();
+    return () => { clearTimeout(timer); sb.removeChannel(ch); };
   }, [enabled, check]);
 
   if (!enabled) return null;

@@ -260,6 +260,17 @@ test("slack threads: replies in your threads become their own conversation, with
   assert.equal(db.rows("messages").find((m) => m.external_id === "D8:1700000200.000100")!.thread_id, item.id);
   assert.equal(db.rows("threads").find((t) => t.id === "dm8")!.unread, false, "the DM itself isn't bumped by a thread reply");
 
+  // Someone else's thread in a channel: still its own conversation, but not unread (you don't follow it).
+  db.rows("threads").push({ id: "ch8", user_id: A.id, account_id: "s8", external_id: "C8", subject: "#general", unread: false, last_message_at: new Date(Date.now() - 3600_000).toISOString() });
+  net = stubFetch((c) => (c.url.includes("users.info") ? { ok: true, user: { real_name: "Dana" } } : undefined));
+  try {
+    await ingestSlackEvent({ id: "s8", user_id: A.id, external_id: "T1:U1" }, { type: "message", channel: "C8", channel_type: "channel", user: "U2", text: "side chat", ts: "1700000300.000100", thread_ts: "1700000250.000100" });
+  } finally { net.restore(); }
+  const other = db.rows("threads").find((t) => t.external_id === "C8/1700000250.000100")!;
+  assert.equal(other.subject, "Thread in #general");
+  assert.equal(other.unread, false);
+  assert.equal(other.needs_reply, false);
+
   // Marking a thread read here can't be mirrored to Slack, and says so.
   net = stubFetch(() => ({ ok: true }));
   try {

@@ -43,7 +43,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   const aiKeyP = thread ? aiKeyInfo(user.id) : Promise.resolve(null);
   const draftRowsP = sb.from("drafts").select("thread_id").eq("user_id", user.id).eq("status", "pending").not("thread_id", "is", null).limit(500);
   const searchP = q ? matchingThreadIds(sb, user.id, q) : Promise.resolve(null);
-  const { accounts, clients, perAcct, unreadTotal, replyTotal } = await inboxSummary();
+  const { accounts, clients, perAcct, unreadTotal } = await inboxSummary();
   const provider = sp.provider && accounts.some((a) => a.provider === sp.provider) ? sp.provider : undefined;
   const acctById = new Map(accounts.map((a) => [a.id, a]));
 
@@ -234,7 +234,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   const list = (
     <section id="conv-list" aria-label="Conversations" className={`${open ? "hidden lg:flex lg:w-[400px] lg:shrink-0 xl:w-[440px]" : "flex flex-1"} min-h-0 min-w-0 flex-col`}>
       <div className="flex items-center gap-1 overflow-x-auto px-3 py-2.5 no-scrollbar md:px-4">
-        {tab("all", "All")}{tab("unread", "Unread", unreadTotal)}{tab("reply", "Needs reply", replyTotal)}{tab("starred", "Starred")}{tab("snoozed", "Snoozed")}{tab("trash", "Trash")}
+        {tab("all", "All")}{tab("unread", "Unread", unreadTotal)}{tab("starred", "Starred")}{tab("snoozed", "Snoozed")}{tab("trash", "Trash")}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-6 md:px-3">
         {threads.length === 0 ? (

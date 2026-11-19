@@ -89,7 +89,7 @@ export async function slackRevoke(token: string) {
 type Conv = { id: string; name?: string; is_im?: boolean; is_mpim?: boolean; is_private?: boolean; user?: string };
 type Msg = { ts?: string; user?: string; bot_id?: string; username?: string; text?: string; subtype?: string; thread_ts?: string; reply_count?: number; latest_reply?: string };
 
-/** A Slack thread you're part of is its own conversation here: external_id "<channel>/<thread ts>". */
+/** Every Slack thread is its own conversation here (like Slack's Threads view): external_id "<channel>/<thread ts>". */
 export const slackThreadKey = (channel: string, threadTs: string) => `${channel}/${threadTs}`;
 export function splitSlackExt(ext: string): { channel: string; threadTs: string | null } {
   const [channel, threadTs] = String(ext).split("/");
@@ -113,7 +113,7 @@ async function threadIsMine(db: Db, accountId: string, channel: string, threadTs
  * otherwise a new reply from someone else makes it unread.
  */
 async function storeThreadReplies(db: Db, acct: { id: string; user_id: string }, channel: string, threadTs: string, channelTitle: string, selfId: string,
-  replies: Msg[], names: Record<string, string>, lastRead?: string) {
+  replies: Msg[], names: Record<string, string>, lastRead?: string, following = true) {
   if (!replies.length) return null;
   replies.sort((a, b) => parseFloat(a.ts!) - parseFloat(b.ts!));
   const key = slackThreadKey(channel, threadTs);
@@ -123,15 +123,16 @@ async function storeThreadReplies(db: Db, acct: { id: string; user_id: string },
   const isNewer = !prev || new Date(lastAt).getTime() > new Date(prev.last_message_at).getTime();
   const lastMine = last.user === selfId;
   const newestIn = [...replies].reverse().find((m) => m.user !== selfId);
-  const unread = lastRead !== undefined
-    ? Boolean(newestIn && parseFloat(newestIn.ts!) > parseFloat(lastRead))
+  // Threads you don't follow (someone else's thread in a channel) never show as unread, same as Slack.
+  const unread = !following ? Boolean(prev?.unread) && !lastMine
+    : lastRead !== undefined ? Boolean(newestIn && parseFloat(newestIn.ts!) > parseFloat(lastRead))
     : isNewer ? !lastMine : Boolean(prev?.unread);
   const title = slackThreadTitle(channelTitle);
   const { data: t, error } = await db.from("threads").upsert({
     user_id: acct.user_id, account_id: acct.id, external_id: key, subject: title, unread,
     ...(isNewer ? {
       snippet: slackTextToPlain(last.text ?? "", names).slice(0, 200), last_message_at: lastAt,
-      needs_reply: !lastMine, last_from: lastMine ? "You" : (last.user ? names[last.user] : last.username) ?? "Slack",
+      needs_reply: following && !lastMine, last_from: lastMine ? "You" : (last.user ? names[last.user] : last.username) ?? "Slack",
     } : {}),
     ...(unread ? {} : { seen_at: new Date().toISOString() }),
   }, { onConflict: "account_id,external_id" }).select("id").single();
@@ -242,7 +243,7 @@ export async function syncSlack(accountId: string) {
       // Threads with new replies (Slack only lists the parent in history): fetch the replies for threads you're in.
       for (const m of msgs.filter((x) => (x.reply_count ?? 0) > 0 && x.latest_reply).slice(-5)) {
         if (repliesBudget <= 0) break;
-        if (!(await threadIsMine(db, accountId, c.id, m.ts!, Boolean(c.is_im || c.is_mpim), selfId, [m]))) continue;
+        const following = await threadIsMine(db, accountId, c.id, m.ts!, Boolean(c.is_im || c.is_mpim), selfId, [m]);
         const { data: item } = await db.from("threads").select("last_message_at").eq("account_id", accountId).eq("external_id", slackThreadKey(c.id, m.ts!)).maybeSingle();
         if (item && new Date(item.last_message_at).getTime() >= new Date(slackTsToIso(m.latest_reply!)).getTime()) continue;
         repliesBudget--;
@@ -251,7 +252,7 @@ export async function syncSlack(accountId: string) {
           const parent = r.messages.find((x) => x.ts === m.ts) as (Msg & { last_read?: string }) | undefined;
           const replies = r.messages.filter((x) => x.ts !== m.ts && isRealMessage(x));
           for (const x of replies) if (x.user) await userName(x.user);
-          await storeThreadReplies(db, acct, c.id, m.ts!, title, selfId, replies, names, parent?.last_read);
+          await storeThreadReplies(db, acct, c.id, m.ts!, title, selfId, replies, names, following ? parent?.last_read : undefined, following);
         } catch (e) {
           if (e instanceof SlackRateLimited) { repliesBudget = 0; continue; }
           if (e instanceof SlackNeedsReauth) throw e;
@@ -318,8 +319,9 @@ export async function ingestSlackEvent(acct: { id: string; user_id: string; exte
   const at = slackTsToIso(ev.ts);
   const direct = ev.channel_type === "im" || ev.channel_type === "mpim";
   // A reply in a thread you're part of goes to that thread's own conversation (the channel itself isn't bumped, like Slack).
-  if (isReply(ev) && await threadIsMine(db, acct.id, ev.channel, ev.thread_ts!, direct, selfId, [ev])) {
-    await storeThreadReplies(db, acct, ev.channel, ev.thread_ts!, title!, selfId, [{ ...ev, text: ev.text || (ev.subtype === "file_share" ? "📎 File" : "") }], names);
+  if (isReply(ev)) {
+    const following = await threadIsMine(db, acct.id, ev.channel, ev.thread_ts!, direct, selfId, [ev]);
+    await storeThreadReplies(db, acct, ev.channel, ev.thread_ts!, title!, selfId, [{ ...ev, text: ev.text || (ev.subtype === "file_share" ? "📎 File" : "") }], names, undefined, following);
     await db.from("accounts").update({ last_synced_at: new Date().toISOString(), status: "connected", status_detail: null }).eq("id", acct.id);
     return true;
   }
