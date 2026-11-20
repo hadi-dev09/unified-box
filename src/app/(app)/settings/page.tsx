@@ -7,16 +7,16 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { disconnectAccount } from "@/lib/accounts";
 import { addRule, createClientRecord, deleteClientRecord, deleteRule } from "@/lib/clients";
 import { supabaseServer } from "@/lib/supabase/server";
-import { slackConfigured } from "@/lib/slack";
 import { ConfirmSubmit } from "./confirm-submit";
 import { TelegramForm, WhatsAppForm } from "./connect-forms";
-import { ImapForm, WhatsAppQrForm } from "./direct-connect-forms";
-import { isConfigured, provider as providerInfo, PROVIDERS } from "@/lib/providers";
-import { accountName, channel, ChannelAvatar, Icon, ProviderIcon } from "../../ui";
+import { WhatsAppQrForm } from "./direct-connect-forms";
+import { ConnectingNotice } from "./connecting-notice";
+import { BrandLogo } from "../../brand-logo";
+import { connectMethod, PROVIDERS } from "@/lib/providers";
+import { accountName, channel, Icon } from "../../ui";
 import { RenameAccount } from "./rename-account";
 import { AiKeyForm } from "./ai-key-form";
 import { aiKeyInfo } from "@/lib/ai-assist";
-import { gmailHasScope, MODIFY_SCOPE } from "@/lib/gmail";
 
 async function userId() {
   const user = await currentUser();
@@ -70,60 +70,74 @@ async function revoke(form: FormData) {
   revalidatePath("/settings");
 }
 
-export default async function Settings({ searchParams }: { searchParams: Promise<{ msg?: string }> }) {
+export default async function Settings({ searchParams }: { searchParams: Promise<{ msg?: string; connecting?: string }> }) {
   const sb = await supabaseServer();
   const user = await currentUser();
   if (!user) redirect("/login");
-  const { msg } = await searchParams;
+  const { msg, connecting } = await searchParams;
   const [{ data: accountRows }, { data: clientRows }, { data: ruleRows, error: rulesErr }] = await Promise.all([
-    sb.from("accounts").select("id, provider, display_name, label, account_type, status, status_detail, can_send").order("provider"),
+    sb.from("accounts").select("id, provider, display_name, label, account_type, status, status_detail, can_send, remote_id").order("provider"),
     sb.from("clients").select("id, name").order("name"),
     sb.from("client_rules").select("id, client_id, kind, pattern").order("pattern"),
   ]);
-  const accounts = (accountRows ?? []) as { id: string; provider: string; display_name: string; label: string | null; account_type: string; status: string; status_detail: string | null; can_send: boolean }[];
-  const manage = Object.fromEntries(await Promise.all(accounts.filter((a) => a.provider === "gmail").map(async (a) => [a.id, await gmailHasScope(a.id, MODIFY_SCOPE)] as const)));
+  const accounts = (accountRows ?? []) as { id: string; provider: string; display_name: string; label: string | null; account_type: string; status: string; status_detail: string | null; can_send: boolean; remote_id: string | null }[];
   const clients = (clientRows ?? []) as { id: string; name: string }[];
   const rules = (ruleRows ?? []) as { id: string; client_id: string; kind: string; pattern: string }[];
   const aiKey = await aiKeyInfo(user.id);
-  const live = PROVIDERS.filter((p) => p.stage === "live");
-  const connectHref = (id: string, write: boolean) => id === "slack" ? `/api/connect/slack${write ? "?write=1" : ""}` : `/api/connect/${id}${write ? "?write=1" : ""}`;
+  // What can be added right now (in a sensible order), and everything else for the roadmap.
+  const ORDER = ["gmail", "whatsapp_web", "outlook", "slack", "telegram", "imap", "instagram", "messenger", "linkedin", "whatsapp"];
+  const available = PROVIDERS.map((p) => ({ p, how: connectMethod(p.id) })).filter((x) => x.how)
+    .sort((a, b) => (ORDER.indexOf(a.p.id) + 99) % 99 - (ORDER.indexOf(b.p.id) + 99) % 99);
+  const upcoming = PROVIDERS.filter((p) => !connectMethod(p.id) && p.id !== "whatsapp");
   const section = "mb-3 mt-10 flex items-end justify-between gap-3";
-  const perm = (on: boolean, label: string) => (
-    <span className={`chip ${on ? "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300" : "bg-[var(--surface-2)] muted"}`}>{on ? <Icon name="check" className="h-3 w-3" /> : null}{label}</span>
-  );
 
   return (
     <PageFrame title="Settings">
     <main className="mx-auto max-w-3xl px-4 pb-16 pt-6 md:px-6">
       {msg && <p role="status" className="mb-4 rounded-xl bg-[var(--accent-soft)] px-4 py-3 text-sm font-medium text-[var(--accent-text)]">{msg}</p>}
 
-      {/* ---------- connected ---------- */}
-      <div className={section + " !mt-2"}>
-        <div><h2 className="text-lg font-semibold tracking-tight">Your channels</h2><p className="text-sm muted">Rename them to whatever you remember them by, such as a client&apos;s name.</p></div>
+      {connecting && <ConnectingNotice provider={connecting} count={accounts.length} />}
+
+      {/* ---------- add ---------- */}
+      <div className={section + " !mt-2"}><div><h2 className="text-lg font-semibold tracking-tight">Add a channel</h2><p className="text-sm muted">Sign in once and new messages arrive automatically.</p></div></div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {available.map(({ p, how }) => (
+          <section key={p.id} aria-label={p.name} className="card flex flex-col p-4">
+            <div className="flex items-center gap-3">
+              <BrandLogo provider={p.id} size={40} />
+              <div className="min-w-0"><h3 className="font-semibold">{p.name}</h3><p className="text-xs muted">{p.blurb}</p></div>
+            </div>
+            <div className="mt-4">
+              {how === "hosted" && <a className="btn-primary" href={`/api/connect/hosted?p=${p.id}`}>Connect {p.name}</a>}
+              {how === "oauth" && <a className="btn-primary" href={`/api/connect/${p.id}?write=1`}>Connect {p.name}</a>}
+              {how === "form" && p.id === "whatsapp" && <WhatsAppForm />}
+              {how === "form" && p.id === "whatsapp_web" && <WhatsAppQrForm />}
+              {how === "form" && p.id === "telegram" && <TelegramForm />}
+            </div>
+          </section>
+        ))}
       </div>
+
+      {/* ---------- connected ---------- */}
+      <div className={section}><div><h2 className="text-lg font-semibold tracking-tight">Your channels</h2><p className="text-sm muted">Rename them to whatever you remember them by, such as a client&apos;s name.</p></div></div>
       <ul className="space-y-2">
-        {accounts.length === 0 && <li className="card p-5 text-sm muted">Nothing connected yet. Pick a channel below.</li>}
+        {accounts.length === 0 && <li className="card p-5 text-sm muted">Nothing connected yet. Pick a channel above.</li>}
         {accounts.map((a) => {
           const c = channel(a.provider);
-          const reconnect = ["gmail", "outlook", "slack"].includes(a.provider) ? connectHref(a.provider, a.can_send) : null;
+          const ok = a.status === "connected";
+          const reconnect = a.remote_id ? `/api/connect/hosted?p=${a.provider}&account=${a.id}` : ["gmail", "outlook", "slack"].includes(a.provider) ? `/api/connect/${a.provider}?write=1` : null;
           return (
             <li key={a.id} className="card flex flex-wrap items-center gap-3 p-3 sm:p-4">
-              <ChannelAvatar provider={a.provider} name={accountName(a)} />
+              <BrandLogo provider={a.provider} size={36} />
               <div className="min-w-0 flex-1">
                 <RenameAccount id={a.id} label={a.label} fallback={a.display_name} />
                 <p className="truncate text-xs muted">{c.name}{a.label ? ` · ${a.display_name}` : ""}</p>
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {perm(true, "Read")}
-                  {perm(a.can_send, a.provider === "gmail" || a.provider === "outlook" ? "Send" : "Reply")}
-                  {a.provider === "gmail" && perm(Boolean(manage[a.id]), "Manage (read/unread, star, trash)")}
-                  {a.status !== "connected" && <span className="chip bg-amber-500/15 text-amber-700 dark:text-amber-300">{a.status === "needs_reauth" ? "Needs reconnect" : a.status === "error" ? "Sync error" : a.status.replace(/_/g, " ")}</span>}
-                </div>
-                {a.status_detail && <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">{a.status_detail}</p>}
               </div>
+              {ok
+                ? <span className="chip bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />Connected</span>
+                : <span className="chip bg-amber-500/15 text-amber-700 dark:text-amber-300">Needs reconnect</span>}
               <div className="flex items-center gap-1.5">
-                {reconnect && (a.status !== "connected" || !a.can_send || (a.provider === "gmail" && !manage[a.id])) && (
-                  <a className="btn !py-1.5 !text-xs" href={connectHref(a.provider, true)}>{a.status !== "connected" ? "Reconnect" : "Upgrade access"}</a>
-                )}
+                {!ok && reconnect && <a className="btn !py-1.5 !text-xs" href={reconnect}>Reconnect</a>}
                 <form action={disconnect}>
                   <input type="hidden" name="account_id" value={a.id} />
                   <ConfirmSubmit message={`Disconnect ${accountName(a)}? Its messages are removed from Unified Box. Nothing is deleted in ${c.name}.`} className="btn !py-1.5 !text-xs !text-red-600">Disconnect</ConfirmSubmit>
@@ -134,43 +148,17 @@ export default async function Settings({ searchParams }: { searchParams: Promise
         })}
       </ul>
 
-      {/* ---------- add ---------- */}
-      <div className={section}><div><h2 className="text-lg font-semibold tracking-tight">Add a channel</h2><p className="text-sm muted">Sign in once; new messages then arrive automatically.</p></div></div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {live.map((p) => {
-          const ready = p.id === "slack" ? slackConfigured() : isConfigured(p);
-          const c = channel(p.id);
-          return (
-            <section key={p.id} aria-label={p.name} className="card flex flex-col p-4">
-              <div className="flex items-center gap-2.5">
-                <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-white" style={{ background: c.color }}><ProviderIcon provider={p.id} /></span>
-                <h3 className="font-semibold">{p.name}</h3>
-                {!ready && <span className="chip ml-auto bg-[var(--surface-2)] muted">Coming soon</span>}
-              </div>
-              <p className="mb-4 mt-2 flex-1 text-sm muted">{p.blurb}</p>
-              {ready && ["gmail", "outlook", "slack"].includes(p.id) && (
-                <div className="flex flex-wrap items-center gap-2">
-                  <a className="btn-primary" href={connectHref(p.id, true)}>Connect {c.name}</a>
-                  <a className="text-xs muted underline-offset-4 hover:underline" href={connectHref(p.id, false)}>or read-only</a>
-                </div>
-              )}
-              {ready && p.id === "whatsapp" && <WhatsAppForm />}
-              {p.id === "whatsapp_web" && <p className="mb-3 rounded-xl bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">Unofficial connection (like WhatsApp Web). WhatsApp may block numbers that send spam or bulk messages; normal replying is usually fine. Use at your own risk.</p>}
-              {ready && p.id === "whatsapp_web" && <WhatsAppQrForm />}
-              {ready && p.id === "imap" && <ImapForm />}
-              {ready && p.id === "telegram" && <TelegramForm />}
-            </section>
-          );
-        })}
-      </div>
-      <details className="mt-3 rounded-2xl border border-dashed border-[var(--border-strong)] px-4 py-3">
-        <summary className="cursor-pointer text-sm font-medium">On the roadmap: {PROVIDERS.filter((p) => p.stage !== "live").map((p) => p.name).join(", ")}</summary>
-        <ul className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
-          {PROVIDERS.filter((p) => p.stage !== "live").map((p) => (
-            <li key={p.id} className="flex gap-2 muted"><ProviderIcon provider={p.id} className="mt-0.5 h-4 w-4 shrink-0" /><span><span className="font-medium text-[var(--text)]">{p.name}</span>{p.stage === "unavailable" ? " · not possible" : ""}<br /><span className="text-xs">{p.blurb}</span></span></li>
-          ))}
-        </ul>
-      </details>
+      {/* ---------- roadmap ---------- */}
+      {upcoming.length > 0 && (
+        <details className="mt-6 rounded-2xl border border-dashed border-[var(--border-strong)] px-4 py-3">
+          <summary className="cursor-pointer text-sm font-medium">On the roadmap: {upcoming.map((p) => p.name).join(", ")}</summary>
+          <ul className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+            {upcoming.map((p) => (
+              <li key={p.id} className="flex items-start gap-2.5 muted"><BrandLogo provider={p.id} size={22} /><span><span className="font-medium text-[var(--text)]">{p.name}</span><br /><span className="text-xs">{p.blurb}</span></span></li>
+            ))}
+          </ul>
+        </details>
+      )}
 
       {/* ---------- clients ---------- */}
       <div className={section}>

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { emailFromIdToken, exchangeCode, idTokenClaims, SEND_SCOPE } from "@/lib/gmail";
+import { emailFromIdToken, exchangeCode, idTokenClaims, READ_SCOPE, SEND_SCOPE } from "@/lib/gmail";
 import { safeNext } from "@/lib/safe-next";
 import { encrypt } from "@/lib/crypto";
 import { env } from "@/lib/env";
@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
     if (p.get("state") !== saved.nonce) return toLogin("Sign-in expired. Please try again.");
     if (p.get("error")) return toLogin(p.get("error") === "access_denied" ? "Google sign-in was cancelled." : `Google error: ${p.get("error")}`);
     try {
-      const t = await exchangeCode(p.get("code") ?? "");
+      const t = await exchangeCode(p.get("code") ?? "", false);
       const who = idTokenClaims(t.id_token);
       if (!who.emailVerified) return toLogin("Your Google email isn't verified.");
       const admin = supabaseAdmin();
@@ -37,15 +37,20 @@ export async function GET(req: NextRequest) {
       const meta = (session?.user?.user_metadata ?? {}) as { full_name?: string; avatar_url?: string };
       const fill = { ...(!meta.full_name && who.name ? { full_name: who.name } : {}), ...(!meta.avatar_url && who.picture ? { avatar_url: who.picture } : {}) };
       if (Object.keys(fill).length) { await sb.auth.updateUser({ data: fill }).catch(() => null); await sb.auth.refreshSession().catch(() => null); }
-      const { data: acct, error } = await admin.from("accounts").upsert(
-        { user_id: uid, provider: "gmail", account_type: "personal", display_name: who.email, external_id: who.email, status: "connected", status_detail: null, can_send: t.scope.includes(SEND_SCOPE) },
-        { onConflict: "user_id,provider,external_id" },
-      ).select("id").single();
-      if (error || !acct) throw new Error(error?.message ?? "account upsert failed");
-      await admin.from("account_secrets").upsert({ account_id: acct.id, tokens_enc: encrypt(JSON.stringify({ access_token: t.access_token, refresh_token: t.refresh_token, expires_at: t.expires_at, scope: t.scope })) });
-      await admin.from("audit_log").insert({ user_id: uid, actor: "user", action: "auth.google", target: who.email, meta: { gmail_connected: true } });
-      await syncAccount(acct.id).catch(() => null);
-      const res = NextResponse.redirect(`${env("APP_URL")}${safeNext(saved.next)}`);
+      const withMail = (t.scope ?? "").includes(READ_SCOPE) && Boolean(t.refresh_token);
+      if (withMail) {
+        const { data: acct, error } = await admin.from("accounts").upsert(
+          { user_id: uid, provider: "gmail", account_type: "personal", display_name: who.email, external_id: who.email, status: "connected", status_detail: null, can_send: t.scope.includes(SEND_SCOPE) },
+          { onConflict: "user_id,provider,external_id" },
+        ).select("id").single();
+        if (error || !acct) throw new Error(error?.message ?? "account upsert failed");
+        await admin.from("account_secrets").upsert({ account_id: acct.id, tokens_enc: encrypt(JSON.stringify({ access_token: t.access_token, refresh_token: t.refresh_token, expires_at: t.expires_at, scope: t.scope })) });
+        await syncAccount(acct.id).catch(() => null);
+      }
+      await admin.from("audit_log").insert({ user_id: uid, actor: "user", action: "auth.google", target: who.email, meta: { gmail_connected: withMail } });
+      // New here with nothing connected yet: go straight to adding a channel.
+      const { count } = await admin.from("accounts").select("id", { count: "exact", head: true }).eq("user_id", uid);
+      const res = NextResponse.redirect(`${env("APP_URL")}${count ? safeNext(saved.next) : "/settings"}`);
       res.cookies.delete({ name: "gmail_oauth", path: "/api/connect/gmail" });
       return res;
     } catch (e) {

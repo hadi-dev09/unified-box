@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import type { SummaryAccount } from "@/lib/inbox-summary";
 import { renameAccountAction } from "./actions";
 import { ThemeSwitch } from "./theme-switch";
+import { BrandLogo } from "./brand-logo";
 import { accountName, channel, ChannelAvatar, Icon, ProviderIcon, statusDot, statusLabel } from "./ui";
 
 type Props = {
@@ -57,7 +58,7 @@ export function SidebarNav({ accounts, clients, perAcct, perClient, perProvider,
               <div key={p}>
                 <div className={`${item(providerSel === p)} pr-1`}>
                   <Link href={`/?provider=${p}`} className="flex min-w-0 flex-1 items-center gap-2.5" title={`All ${c.name} messages`}>
-                    <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-white" style={{ background: c.color }}><ProviderIcon provider={p} className="h-3.5 w-3.5" /></span>
+                    <BrandLogo provider={p} size={24} />
                     <span className="truncate">{c.name}</span>
                     {badge(perProvider[p] ?? 0)}
                   </Link>

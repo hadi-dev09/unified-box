@@ -35,7 +35,10 @@ export async function applyThreadAction(userId: string, ids: string[], action: T
 
   // Mirror to Gmail where allowed.
   let mirrored = 0, skipped = 0, slackThreads = 0;
-  const gmail = rows.filter((r) => r.accounts?.provider === "gmail");
+  const acctIds = [...new Set(rows.map((r) => r.account_id))];
+  const { data: remotes } = acctIds.length ? await db.from("accounts").select("id, remote_id").in("id", acctIds).not("remote_id", "is", null) : { data: [] };
+  const remoteOf = new Map(((remotes ?? []) as { id: string; remote_id: string }[]).map((a) => [a.id, a.remote_id]));
+  const gmail = rows.filter((r) => r.accounts?.provider === "gmail" && !remoteOf.has(r.account_id));
   const canModify = new Map<string, boolean>();
   if (["read", "unread", "star", "unstar", "trash", "restore"].includes(action)) {
     for (const r of gmail) {
@@ -50,6 +53,19 @@ export async function applyThreadAction(userId: string, ids: string[], action: T
         if (action === "restore") await gmailTrashThread(r.account_id, r.external_id, true);
         mirrored++;
       } catch { skipped++; }
+    }
+  }
+  // Accounts connected through Unipile: mirror read/unread to Gmail/Outlook/WhatsApp/… too.
+  if (action === "read" || action === "unread") {
+    if (remoteOf.size) {
+      const { unipileMark } = await import("./unipile");
+      for (const r of rows.filter((x) => remoteOf.has(x.account_id))) {
+        try {
+          const { data: newest } = await db.from("messages").select("external_id").eq("thread_id", r.id).eq("is_outgoing", false).order("sent_at", { ascending: false }).limit(1).maybeSingle();
+          await unipileMark(r.accounts?.provider ?? "", r.external_id, (newest?.external_id as string | undefined) ?? null, action === "read");
+          mirrored++;
+        } catch { skipped++; }
+      }
     }
   }
   // Mirror read/unread to Slack (moves your read position there) when the connection allows it.

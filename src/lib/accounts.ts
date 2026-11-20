@@ -5,10 +5,13 @@ import { supabaseAdmin } from "./supabase/admin";
 /** Removes a connected account and everything synced from it (DB cascades), and revokes the provider grant/session where possible. */
 export async function disconnectAccount(userId: string, accountId: string): Promise<{ ok: boolean; error?: string }> {
   const db = supabaseAdmin();
-  const { data: acct } = await db.from("accounts").select("id, provider, external_id").eq("id", accountId).eq("user_id", userId).maybeSingle();
+  const { data: acct } = await db.from("accounts").select("id, provider, external_id, remote_id").eq("id", accountId).eq("user_id", userId).maybeSingle();
   if (!acct) return { ok: false, error: "Account not found" };
 
-  if (acct.provider === "gmail") {
+  if (acct.remote_id) {
+    // Connected through Unipile: remove it there too (ends the WhatsApp/Telegram session, drops the mail grant).
+    try { const { unipileDisconnect } = await import("./unipile"); await unipileDisconnect(acct.remote_id); } catch { /* best effort */ }
+  } else if (acct.provider === "gmail") {
     // Best effort: tell Google to revoke so the app disappears from the user's Google permissions too.
     try {
       const { data: sec } = await db.from("account_secrets").select("tokens_enc").eq("account_id", accountId).maybeSingle();

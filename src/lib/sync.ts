@@ -20,6 +20,7 @@ export async function syncAccount(accountId: string): Promise<SyncResult> {
   const db = supabaseAdmin();
   const { data: acct } = await db.from("accounts").select("*").eq("id", accountId).single();
   if (!acct) return { accountId, synced: 0 };
+  if (acct.remote_id) return syncUnipile(acct);
   if (acct.provider === "slack") return syncSlack(accountId);
   if (acct.provider === "imap") return syncImap(acct);
   if (acct.provider === "whatsapp" || acct.provider === "whatsapp_web") {
@@ -171,4 +172,23 @@ async function syncOutlook(acct: Acct): Promise<SyncResult> {
     return !p || p.unread !== t.unread || p.last_message_at !== t.last_message_at;
   });
   return { accountId: acct.id, synced: msgs.length, unread: msgs.filter((m) => m.unread).length, changed };
+}
+
+/** Accounts connected through Unipile (Gmail/Outlook/other email, WhatsApp, Telegram, Instagram, Messenger, LinkedIn). */
+async function syncUnipile(acct: Acct & { provider: string; remote_id: string; last_synced_at: string | null }): Promise<SyncResult> {
+  const db = supabaseAdmin();
+  try {
+    const { unipileRecent } = await import("./unipile");
+    const { convs } = await unipileRecent(acct.remote_id, acct.provider, acct.external_id, acct.last_synced_at);
+    const rules = convs.length ? await loadRules(acct.user_id) : [];
+    let synced = 0;
+    for (const c of convs) { await storeConversation(acct, c.ext, c.msgs, c.unread, rules, c.title); synced += c.msgs.length; }
+    await db.from("accounts").update({ status: "connected", status_detail: null, last_synced_at: new Date().toISOString() }).eq("id", acct.id);
+    return { accountId: acct.id, synced, changed: synced > 0 };
+  } catch (e) {
+    const msg = String((e as Error).message ?? e);
+    const reauth = /\b(401|403)\b|disconnected|credentials/i.test(msg);
+    await db.from("accounts").update({ status: reauth ? "needs_reauth" : "error", status_detail: msg.slice(0, 300) }).eq("id", acct.id);
+    return { accountId: acct.id, synced: 0, error: msg };
+  }
 }

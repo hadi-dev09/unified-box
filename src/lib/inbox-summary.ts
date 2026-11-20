@@ -1,13 +1,13 @@
 import { cache } from "react";
 import { supabaseServer } from "./supabase/server";
 
-export type SummaryAccount = { id: string; provider: string; display_name: string; label: string | null; account_type: string; status: string; status_detail: string | null; last_synced_at: string | null; can_send: boolean; external_id: string };
+export type SummaryAccount = { id: string; provider: string; display_name: string; label: string | null; account_type: string; status: string; status_detail: string | null; last_synced_at: string | null; can_send: boolean; external_id: string; remote_id?: string | null };
 
 /** Sidebar + header data, computed once per request (shared by the layout and the inbox page). */
 export const inboxSummary = cache(async () => {
   const sb = await supabaseServer();
   const [{ data: accountRows }, { count: pending }, { data: counts }, { data: clientRows }] = await Promise.all([
-    sb.from("accounts").select("id, provider, display_name, label, account_type, status, status_detail, last_synced_at, can_send, external_id").order("display_name"),
+    sb.from("accounts").select("id, provider, display_name, label, account_type, status, status_detail, last_synced_at, can_send, external_id, remote_id").order("display_name"),
     sb.from("drafts").select("id", { count: "exact", head: true }).eq("status", "pending"),
     sb.from("threads").select("account_id, client_id, unread, needs_reply").or("unread.eq.true,needs_reply.eq.true").is("trashed_at", null).is("snoozed_until", null).limit(5000),
     sb.from("clients").select("id, name").order("name"),

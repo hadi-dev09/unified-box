@@ -120,7 +120,11 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
     };
     const openHref = !acct ? null
       : acct.provider === "slack" ? `https://slack.com/app_redirect?team=${encodeURIComponent(acct.external_id.split(":")[0])}&channel=${encodeURIComponent(slackChannel)}`
-      : acct.provider === "gmail" ? `https://mail.google.com/mail/?authuser=${encodeURIComponent(acct.external_id)}#all/${encodeURIComponent(cur.external_id)}`
+      : acct.provider === "gmail" ? (acct.remote_id ? `https://mail.google.com/mail/?authuser=${encodeURIComponent(acct.external_id)}` : `https://mail.google.com/mail/?authuser=${encodeURIComponent(acct.external_id)}#all/${encodeURIComponent(cur.external_id)}`)
+      : acct.provider === "instagram" ? "https://www.instagram.com/direct/inbox/"
+      : acct.provider === "messenger" ? "https://www.messenger.com/"
+      : acct.provider === "linkedin" ? "https://www.linkedin.com/messaging/"
+      : acct.provider === "whatsapp_web" ? "https://web.whatsapp.com/"
       : acct.provider === "outlook" ? "https://outlook.office.com/mail/"
       : acct.provider === "whatsapp" ? `https://wa.me/${encodeURIComponent(cur.external_id)}`
       : acct.provider === "whatsapp_web" ? `https://wa.me/${encodeURIComponent(cur.external_id.split("@")[0])}`

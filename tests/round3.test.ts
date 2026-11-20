@@ -128,24 +128,23 @@ test("slack events: signature + replay checks; message is stored for the authori
   assert.equal(db.rows("threads").filter((x) => x.account_id === "s2").length, 0);
 });
 
-test("Continue with Google: new user is created, signed in and their Gmail connected in one step", async () => {
+test("Continue with Google: signs up with name and email only (no Gmail access, so no Google warning), then goes to Add a channel", async () => {
   db.user = null;
   const start = await googleStart.GET(new NextRequest("https://app.test/api/auth/google?next=/settings"));
   const loc = new URL(start.headers.get("location")!);
   assert.equal(loc.hostname, "accounts.google.com");
-  assert.match(loc.searchParams.get("scope")!, /gmail\.modify/);
+  assert.equal(loc.searchParams.get("scope"), "openid email profile");
   const cookie = start.headers.getSetCookie()[0].split(";")[0];
   const state = loc.searchParams.get("state")!;
   const idToken = `x.${Buffer.from(JSON.stringify({ email: "New@Example.com", email_verified: true, name: "New Person" })).toString("base64url")}.y`;
-  const net = stubFetch((c) => c.url === "https://oauth2.googleapis.com/token" ? { access_token: "at", refresh_token: "rt", expires_in: 3600, scope: `openid email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send ${MODIFY_SCOPE}`, id_token: idToken } : c.url.includes("/messages?") ? { messages: [] } : undefined);
+  const net = stubFetch((c) => c.url === "https://oauth2.googleapis.com/token" ? { access_token: "at", expires_in: 3600, scope: "openid email profile", id_token: idToken } : c.url.includes("/messages?") ? { messages: [] } : undefined);
   try {
     const forged = await gmailCallback.GET(new NextRequest(`https://app.test/api/connect/gmail/callback?code=c&state=bad`, { headers: { cookie } }));
     assert.match(decodeURIComponent(forged.headers.get("location")!), /\/login\?error=Sign-in expired/);
     const r = await gmailCallback.GET(new NextRequest(`https://app.test/api/connect/gmail/callback?code=c&state=${state}`, { headers: { cookie } }));
     assert.equal(r.headers.get("location"), "https://app.test/settings");
     assert.equal(db.user?.email, "new@example.com", "signed in");
-    const acct = db.rows("accounts")[0];
-    assert.equal(acct.user_id, db.user!.id); assert.equal(acct.provider, "gmail"); assert.equal(acct.can_send, true);
+    assert.equal(db.rows("accounts").length, 0, "no inbox is connected at sign-up");
   } finally { net.restore(); }
   // unverified Google email is refused
   const s2 = await googleStart.GET(new NextRequest("https://app.test/api/auth/google"));

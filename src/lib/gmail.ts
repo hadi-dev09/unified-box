@@ -8,15 +8,14 @@ export const SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 /** Lets read/unread, star and trash made in Unified Box show up in Gmail too (requested with "read + send"). */
 export const MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify";
 
-export function authUrl(state: string, withSend: boolean) {
+/** basicOnly: just "who are you" (name, email, photo) for signing in. Google needs no app review for that and shows no warning. */
+export function authUrl(state: string, withSend: boolean, basicOnly = false) {
   const p = new URLSearchParams({
     client_id: env("GOOGLE_CLIENT_ID"),
     redirect_uri: `${env("APP_URL")}/api/connect/gmail/callback`,
     response_type: "code",
-    access_type: "offline",
-    prompt: "consent",
-    include_granted_scopes: "true",
-    scope: ["openid", "email", "profile", READ_SCOPE, ...(withSend ? [SEND_SCOPE, MODIFY_SCOPE] : [])].join(" "),
+    ...(basicOnly ? { prompt: "select_account" } : { access_type: "offline", prompt: "consent", include_granted_scopes: "true" }),
+    scope: ["openid", "email", "profile", ...(basicOnly ? [] : [READ_SCOPE, ...(withSend ? [SEND_SCOPE, MODIFY_SCOPE] : [])])].join(" "),
     state,
   });
   return `https://accounts.google.com/o/oauth2/v2/auth?${p}`;
@@ -24,7 +23,8 @@ export function authUrl(state: string, withSend: boolean) {
 
 type Tokens = { access_token: string; refresh_token: string; expires_at: number; scope: string };
 
-export async function exchangeCode(code: string): Promise<Tokens & { id_token: string }> {
+/** needRefresh=false for plain sign-in (name/email only), where Google gives no long-lived token. */
+export async function exchangeCode(code: string, needRefresh = true): Promise<Tokens & { id_token: string }> {
   const r = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -37,7 +37,7 @@ export async function exchangeCode(code: string): Promise<Tokens & { id_token: s
     }),
   });
   const j = await r.json();
-  if (!r.ok || !j.refresh_token) throw new Error(`Google token exchange failed: ${j.error_description ?? j.error ?? "no refresh token"}`);
+  if (!r.ok || (needRefresh && !j.refresh_token)) throw new Error(`Google token exchange failed: ${j.error_description ?? j.error ?? "no refresh token"}`);
   return { ...j, expires_at: Date.now() + j.expires_in * 1000 };
 }
 

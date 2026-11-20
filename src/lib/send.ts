@@ -44,7 +44,7 @@ export async function decideDraft(userId: string, draftId: string, action: "appr
 async function deliverDraft(userId: string, d: Record<string, any>): Promise<Result> { // eslint-disable-line @typescript-eslint/no-explicit-any
   const db = supabaseAdmin();
   const draftId = d.id as string;
-  const { data: acct } = await db.from("accounts").select("id, user_id, external_id, can_send, provider").eq("id", d.account_id).single();
+  const { data: acct } = await db.from("accounts").select("id, user_id, external_id, can_send, provider, remote_id").eq("id", d.account_id).single();
   try {
     const prov = acct?.provider as ProviderId | undefined;
     if (!acct || !prov) throw new Error("This account is no longer connected.");
@@ -68,6 +68,16 @@ async function deliverDraft(userId: string, d: Record<string, any>): Promise<Res
         lastExternal = (msgs ?? []).at(-1)?.external_id;
       }
       if (prov === "gmail" && d.mode === "forward") threadId = undefined; // a forward starts a new Gmail thread
+      if (acct.remote_id) {
+        // Connected through Unipile: reply to the newest email of the conversation (keeps the thread), or start a new one.
+        const { unipileSendEmail } = await import("./unipile");
+        await unipileSendEmail(acct.remote_id as string, { to: d.to_addrs, cc: d.cc_addrs ?? [], subject: d.subject, body: d.body, replyToId: d.mode === "forward" ? undefined : lastExternal });
+        const { syncAccount } = await import("./sync");
+        await syncAccount(d.account_id).catch(() => null);
+        await db.from("drafts").update({ status: "sent" }).eq("id", draftId);
+        await db.from("audit_log").insert({ user_id: userId, actor: "system", action: "draft.sent", target: draftId });
+        return { status: 200, body: { status: "sent" } };
+      }
       const mail = { from: acct.external_id, to: d.to_addrs, cc: d.cc_addrs ?? [], subject: d.subject, body: d.body, threadId, inReplyTo, references };
       if (prov === "imap") {
         const { imapSend } = await import("./imap");
@@ -92,7 +102,10 @@ async function deliverDraft(userId: string, d: Record<string, any>): Promise<Res
       if (!t) throw new Error("conversation not found");
       const text = String(d.body).slice(0, prov === "slack" ? 12_000 : 4096);
       let sentId: string;
-      if (prov === "whatsapp") {
+      if (acct.remote_id) {
+        const { unipileSendChat } = await import("./unipile");
+        sentId = `${t.external_id}:${(await unipileSendChat(t.external_id, text)).id}`;
+      } else if (prov === "whatsapp") {
         const { waSend } = await import("./whatsapp");
         sentId = (await waSend(d.account_id, acct.external_id, t.external_id, text)).id;
       } else if (prov === "telegram") {
