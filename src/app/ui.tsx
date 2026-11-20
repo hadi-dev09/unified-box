@@ -28,7 +28,7 @@ export function ProviderIcon({ provider, className = "h-4 w-4" }: { provider?: s
   const svg = (d: React.ReactNode) => (
     <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>{d}</svg>
   );
-  if (provider === "whatsapp") return svg(<><path d="M4 20l1.3-3.9A8 8 0 1 1 8 19.1z" /><path d="M9.5 9.5c0 2.5 2.5 5 5 5l1-1.5-2-1-1 .8a4 4 0 0 1-2.3-2.3l.8-1-1-2z" /></>);
+  if (provider === "whatsapp" || provider === "whatsapp_web") return svg(<><path d="M4 20l1.3-3.9A8 8 0 1 1 8 19.1z" /><path d="M9.5 9.5c0 2.5 2.5 5 5 5l1-1.5-2-1-1 .8a4 4 0 0 1-2.3-2.3l.8-1-1-2z" /></>);
   if (provider === "telegram") return svg(<path d="M21 4 3 11l6 2.2M21 4l-3 16-9-6.8M21 4 9 13.2V19l3-3.3" />);
   if (provider === "outlook" || provider === "teams") return svg(<><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="M3 9h18" /><path d="M8 13h3" /></>);
   if (provider === "sms") return svg(<><rect x="6" y="2.5" width="12" height="19" rx="2.5" /><path d="M11 18h2" /></>);
@@ -103,7 +103,9 @@ export const CHANNEL: Record<string, { name: string; color: string; soft: string
   gmail: { name: "Gmail", color: "#EA4335", soft: "rgb(234 67 53 / 0.12)" },
   outlook: { name: "Outlook", color: "#0F6CBD", soft: "rgb(15 108 189 / 0.12)" },
   slack: { name: "Slack", color: "#A0418E", soft: "rgb(160 65 142 / 0.14)" },
-  whatsapp: { name: "WhatsApp", color: "#1FA855", soft: "rgb(31 168 85 / 0.13)" },
+  whatsapp: { name: "WhatsApp Business", color: "#1FA855", soft: "rgb(31 168 85 / 0.13)" },
+  whatsapp_web: { name: "WhatsApp", color: "#128C7E", soft: "rgb(18 140 126 / 0.13)" },
+  imap: { name: "Email", color: "#6B5CE7", soft: "rgb(107 92 231 / 0.13)" },
   telegram: { name: "Telegram", color: "#229ED9", soft: "rgb(34 158 217 / 0.13)" },
   teams: { name: "Teams", color: "#5B5FC7", soft: "rgb(91 95 199 / 0.13)" },
 };

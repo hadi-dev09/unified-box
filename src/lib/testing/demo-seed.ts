@@ -84,6 +84,13 @@ export function seedDemo(db: FakeDb) {
     db.rows("account_secrets").push({ account_id: "a1", tokens_enc: tok }, { account_id: "a3", tokens_enc: tok }, { account_id: "a4", tokens_enc: tok }, { account_id: "a5", tokens_enc: tok }, { account_id: "a6", tokens_enc: encrypt(JSON.stringify({ session: "demo" })) });
   }
   installDemoNetwork();
+  // Demo IMAP/SMTP: any app password works; the mailbox has one message.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  (require("../imap") as typeof import("../imap")).setMailFactories(() => ({
+    connect: async () => {}, logout: async () => {}, getMailboxLock: async () => ({ release: () => {} }), search: async () => [7],
+    fetch: async function* () { yield { uid: 7, flags: new Set(), threadId: undefined }; },
+    fetchOne: async () => ({ uid: 7, source: Buffer.from(`From: Yusuf <yusuf@client-co.com>\r\nTo: you@yahoo.com\r\nSubject: Quote for phase 2\r\nMessage-ID: <q1@client-co.com>\r\nDate: ${new Date().toUTCString()}\r\nContent-Type: text/plain\r\n\r\nHi, can you send the quote for phase 2 by Friday?\r\n`) }),
+  }) as never, () => ({ verify: async () => true, sendMail: async () => ({ messageId: `<demo${Date.now()}@mail>` }) }) as never);
   db.rows("api_tokens").push({ id: "k1", user_id: u, name: "Cursor", token_hash: "x", prefix: "ubx_Ab12Cd", created_at: ago(600), last_used_at: ago(30), revoked_at: null });
   db.rows("oauth_clients").push({ client_id: "demo-claude", client_name: "Claude", redirect_uris: ["https://claude.example/callback"] });
   db.rows("oauth_tokens").push({ token_hash: "h1", kind: "refresh", client_id: "demo-claude", user_id: u, expires_at: ago(-60 * 24 * 20) });
@@ -100,6 +107,15 @@ export function installDemoNetwork() {
     const ok = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "content-type": "application/json" } });
     if (url.includes("gmail.googleapis.com") && url.endsWith("/messages/send")) return ok({ id: `demo-${Date.now()}` });
     if (url.includes("graph.facebook.com") && url.endsWith("/messages")) return ok({ messages: [{ id: `wamid.demo${Date.now()}` }] });
+    // Demo WhatsApp gateway: QR for ~3 polls, then linked.
+    if (url.startsWith("https://wa-demo.test/")) {
+      const gw = globalThis as unknown as { __WA_POLLS__?: number };
+      if (url.endsWith("/api/sessions") && init?.method === "POST") { gw.__WA_POLLS__ = 0; return ok({ status: "STARTING" }); }
+      if (/\/auth\/qr/.test(url)) return ok({ mimetype: "image/svg+xml", data: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="220" height="220"><rect width="220" height="220" fill="#fff"/><g fill="#111">${Array.from({ length: 121 }, (_, i) => ((i * 37) % 7 < 3 ? `<rect x="${(i % 11) * 20}" y="${Math.floor(i / 11) * 20}" width="20" height="20"/>` : "")).join("")}</g></svg>`).toString("base64") });
+      if (/\/request-code$/.test(url)) return ok({ code: "WXYZ-2468" });
+      if (/\/api\/sessions\/ub[a-f0-9]+$/.test(url)) { gw.__WA_POLLS__ = (gw.__WA_POLLS__ ?? 0) + 1; return ok(gw.__WA_POLLS__ > 3 ? { status: "WORKING", me: { id: "923004445555@c.us", pushName: "Demo Phone" } } : { status: "SCAN_QR_CODE" }); }
+      return ok({});
+    }
     if (url === "https://api.openai.com/v1/models") return ok({ data: [{ id: "gpt-5" }, { id: "gpt-5-mini" }] });
     if (url === "https://api.openai.com/v1/chat/completions") return ok({ choices: [{ message: { content: "Hi Sarah, Thursday works for the review. Thanks!" }, finish_reason: "stop" }] });
     if (url.startsWith("https://api.anthropic.com/v1/models")) return ok({ data: [{ id: "claude-opus-5-5", type: "model" }], has_more: false, first_id: "a", last_id: "a" });

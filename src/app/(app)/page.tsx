@@ -92,7 +92,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
     const acct = acctById.get(cur.account_id);
     const self = acct?.external_id ?? "";
     const last = messages.at(-1);
-    const isChat = Boolean(acct && !["gmail", "outlook"].includes(acct.provider));
+    const isChat = Boolean(acct && !["gmail", "outlook", "imap"].includes(acct.provider));
     // Slack: a thread you're in is its own conversation ("<channel>/<thread ts>"); the channel links to its threads.
     const [slackChannel, slackThreadTs] = acct?.provider === "slack" ? cur.external_id.split("/") : [cur.external_id, undefined];
     let timeline = messages as unknown as ChatMsg[];
@@ -123,6 +123,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
       : acct.provider === "gmail" ? `https://mail.google.com/mail/?authuser=${encodeURIComponent(acct.external_id)}#all/${encodeURIComponent(cur.external_id)}`
       : acct.provider === "outlook" ? "https://outlook.office.com/mail/"
       : acct.provider === "whatsapp" ? `https://wa.me/${encodeURIComponent(cur.external_id)}`
+      : acct.provider === "whatsapp_web" ? `https://wa.me/${encodeURIComponent(cur.external_id.split("@")[0])}`
       : acct.provider === "telegram" ? "https://web.telegram.org/"
       : null;
     const reconnectHref = acct?.provider === "outlook" ? "/api/connect/outlook?write=1" : acct?.provider === "slack" ? "/api/connect/slack?write=1" : acct?.provider === "gmail" ? "/api/connect/gmail?write=1" : "/settings";

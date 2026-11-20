@@ -103,7 +103,7 @@ export function ThreadList({ threads, activeId, hrefFor, showChannel, view }: {
       <ul className="space-y-1">
         {rows.map((t) => {
           const active = activeId === t.id;
-          const isChat = Boolean(t.provider && !["gmail", "outlook"].includes(t.provider));
+          const isChat = Boolean(t.provider && !["gmail", "outlook", "imap"].includes(t.provider));
           const slack = t.provider === "slack" ? slackRow(t) : null;
           const who = slack ? slack.who : isChat ? t.subject || t.last_from || "(unknown)" : t.last_from || "(unknown)";
           const checked = sel.has(t.id);

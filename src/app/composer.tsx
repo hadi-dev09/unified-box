@@ -21,7 +21,7 @@ function revealInPane(el: HTMLElement | null) {
 export type Preset = { to: string[]; cc: string[]; subject: string; body: string };
 export type SavedDraft = { mode: Mode; to: string[]; cc: string[]; subject: string; body: string; savedAt: string };
 
-const APP_NAME: Record<string, string> = { gmail: "Gmail", outlook: "Outlook", slack: "Slack", whatsapp: "WhatsApp", telegram: "Telegram" };
+const APP_NAME: Record<string, string> = { whatsapp_web: "WhatsApp", imap: "Email", gmail: "Gmail", outlook: "Outlook", slack: "Slack", whatsapp: "WhatsApp", telegram: "Telegram" };
 const LABEL: Record<Mode, string> = { reply: "Reply", reply_all: "Reply all", forward: "Forward" };
 const field = "field";
 const btn = "btn";
@@ -130,7 +130,7 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
   }
 
   const appName = APP_NAME[provider] ?? provider;
-  if (provider === "whatsapp" || provider === "telegram" || provider === "slack") {
+  if (provider === "whatsapp" || provider === "whatsapp_web" || provider === "telegram" || provider === "slack") {
     return (
       <form className="space-y-2" onSubmit={(e) => { e.preventDefault(); sendChat(); }}>
         {canSend && <AiHelper threadId={threadId} hasKey={hasAiKey} text={body} setText={setBody} />}
@@ -156,7 +156,7 @@ export function Composer({ threadId, provider, canSend, showReplyAll, presets, r
       </form>
     );
   }
-  if (provider !== "gmail" && provider !== "outlook") {
+  if (provider !== "gmail" && provider !== "outlook" && provider !== "imap") {
     return (
       <div className="flex flex-wrap items-center gap-2">
         {openHref && <a className={btn} href={openHref} target="_blank" rel="noopener noreferrer"><Icon name="external" /> Open in {appName}</a>}

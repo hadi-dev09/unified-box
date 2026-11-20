@@ -29,7 +29,7 @@ export async function backgroundSync(budgetMs = 50_000) {
   const scheduled = await sendDueScheduled().catch(() => ({ due: 0, sent: 0 }));
   const { data } = await db.from("accounts").select("id, last_synced_at, provider").in("status", ["connected", "error"]);
   const due = (data ?? [])
-    .filter((a: { last_synced_at: string | null; provider: string }) => a.provider !== "whatsapp" && (!a.last_synced_at || Date.now() - new Date(a.last_synced_at).getTime() > dueAfterMs(a.provider)))
+    .filter((a: { last_synced_at: string | null; provider: string }) => a.provider !== "whatsapp" && a.provider !== "whatsapp_web" && (!a.last_synced_at || Date.now() - new Date(a.last_synced_at).getTime() > dueAfterMs(a.provider)))
     .sort((a: { last_synced_at: string | null }, b: { last_synced_at: string | null }) => String(a.last_synced_at ?? "").localeCompare(String(b.last_synced_at ?? "")));
   // Slack read state is cheap to check, so do it every minute (history polling is the slow part).
   const slackIds = (data ?? []).filter((a: { provider: string }) => a.provider === "slack").map((a: { id: string }) => a.id);

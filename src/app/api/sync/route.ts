@@ -17,7 +17,7 @@ function isCron(req: NextRequest) {
 }
 
 type Acct = { id: string; provider: string; last_synced_at: string | null; status: string };
-const isDue = (a: Acct) => a.provider !== "whatsapp" && ["connected", "error"].includes(a.status) && (!a.last_synced_at || Date.now() - new Date(a.last_synced_at).getTime() > dueAfterMs(a.provider));
+const isDue = (a: Acct) => a.provider !== "whatsapp" && a.provider !== "whatsapp_web" && ["connected", "error"].includes(a.status) && (!a.last_synced_at || Date.now() - new Date(a.last_synced_at).getTime() > dueAfterMs(a.provider));
 
 /** A tiny fingerprint of the inbox: the app reloads the screen only when it changes. */
 async function fingerprint(userId: string, accts: Acct[]) {

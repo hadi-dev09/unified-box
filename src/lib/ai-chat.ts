@@ -39,7 +39,7 @@ export async function buildChatContext(userId: string, question: string, threadI
   const refs: Record<string, Ref> = {};
   const lines = rows.map((r, i) => {
     const ref = `T${i + 1}`;
-    const chat = r.accounts && !["gmail", "outlook"].includes(r.accounts.provider);
+    const chat = r.accounts && !["gmail", "outlook", "imap"].includes(r.accounts.provider);
     refs[ref] = { id: r.id, title: chat ? (r.subject ?? "Chat") : (r.subject || r.last_from || "(no subject)"), provider: r.accounts?.provider ?? "", who: r.last_from ?? "" };
     const acct = r.accounts ? `${r.accounts.provider}:${r.accounts.label || r.accounts.display_name}` : "";
     return `${ref} | ${r.last_message_at} | ${acct} | from ${r.last_from ?? "?"} | "${(r.subject ?? "").slice(0, 120)}"${r.unread ? " | UNREAD" : ""}${r.needs_reply ? " | needs reply" : ""} | ${(r.snippet ?? "").replace(/\s+/g, " ").slice(0, 140)}`;

@@ -170,7 +170,7 @@ export const tools: Tool[] = [
     }),
 
   def("connect_channel_link", "Get the link the user opens to connect another inbox (Gmail, Outlook, Slack, WhatsApp Business, Telegram). Connecting always needs the user to sign in themselves.",
-    z.object({ channel: z.enum(["gmail", "outlook", "slack", "whatsapp", "telegram"]) }), async (_uid, a) => {
+    z.object({ channel: z.enum(["gmail", "outlook", "slack", "whatsapp", "whatsapp_web", "imap", "telegram"]) }), async (_uid, a) => {
       const base = process.env.APP_URL ?? "";
       const direct: Record<string, string> = { gmail: "/api/connect/gmail?write=1", outlook: "/api/connect/outlook?write=1", slack: "/api/connect/slack?write=1" };
       return { url: `${base}${direct[a.channel] ?? "/settings"}`, note: "Ask the user to open this link and sign in. You can't connect accounts on their behalf." };

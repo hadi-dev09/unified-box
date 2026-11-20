@@ -30,6 +30,11 @@ export async function disconnectAccount(userId: string, accountId: string): Prom
     } catch { /* best effort */ }
   }
 
+  if (acct.provider === "whatsapp_web") {
+    // Unlink the device from the person's phone and delete the gateway session.
+    try { const { gwLogout } = await import("./wa-gateway"); await gwLogout(acct.external_id); } catch { /* best effort */ }
+  }
+
   if (acct.provider === "telegram") {
     // End the Telegram session so it disappears from the user's active devices.
     try { const { telegramLogOut } = await import("./telegram"); await telegramLogOut(accountId); } catch { /* best effort */ }

@@ -78,7 +78,7 @@ When given an <inbox> list instead of one conversation, help the user prioritise
 export async function runAssist(userId: string, input: { task: AiTask; provider: string; subject: string; messages: Msg[]; instructions?: string; text?: string; me?: { name: string; email: string } }) {
   const { data } = await supabaseAdmin().from("user_ai_keys").select("key_enc, provider, model").eq("user_id", userId).maybeSingle();
   if (!data) return { ok: false as const, error: "Add your Claude or OpenAI API key in Settings → AI assistant first.", needsKey: true };
-  const kind = ["gmail", "outlook"].includes(input.provider) ? "email" : `${input.provider} chat`;
+  const kind = ["gmail", "outlook", "imap"].includes(input.provider) ? "email" : `${input.provider} chat`;
 
   // Most recent messages last; keep the prompt bounded (older messages are trimmed first).
   let budget = 60_000;
@@ -142,7 +142,7 @@ export async function runInboxChat(userId: string, input: { question: string; th
   if (!data) return { ok: false as const, error: "Add your Claude or OpenAI API key in Settings → AI assistant first.", needsKey: true };
   let context: string;
   if (input.thread) {
-    const kind = ["gmail", "outlook"].includes(input.thread.provider) ? "email" : `${input.thread.provider} chat`;
+    const kind = ["gmail", "outlook", "imap"].includes(input.thread.provider) ? "email" : `${input.thread.provider} chat`;
     const lines = input.thread.messages.slice(-40).map((m) => `[${m.sent_at}] ${m.is_outgoing ? "Me (the user)" : (m.from_name || m.from_addr || "Someone")}:\n${(m.body_text ?? "").slice(0, 4000)}`);
     context = `<conversation kind="${kind}" subject="${input.thread.subject.replace(/"/g, "'").slice(0, 200)}">\n${lines.join("\n\n")}\n</conversation>`;
   } else {
