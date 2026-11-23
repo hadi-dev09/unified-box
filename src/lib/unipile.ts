@@ -166,7 +166,6 @@ type Conv = { ext: string; title?: string; msgs: GmailMsg[]; unread: boolean };
 async function chatConv(acc: string, c: UChat, self: string): Promise<Conv | null> {
   const mraw = await api<{ data?: UMessage[]; items?: UMessage[] }>("GET", `/v2/${acc}/chats/${seg(c.id)}/messages`, { query: { limit: "50" } });
   const msgs = mraw.data ?? mraw.items ?? [];
-  console.log("[unipile-diag] msgs", JSON.stringify({ n: msgs.length, newest: msgs.map((m) => m.timestamp).sort().slice(-2), unread: c.unread_count }));
   const title = c.name || "Chat";
   const unreadCount = Math.max(0, c.unread_count ?? 0);
   const real = msgs.filter((m) => !m.is_event && !m.is_hidden && !m.is_deleted).sort((x, y) => x.timestamp.localeCompare(y.timestamp));
@@ -203,14 +202,6 @@ export async function unipileRecent(remoteId: string, provider: string, self: st
   const raw = await api<{ data?: UChat[]; items?: UChat[] }>("GET", `/v2/${acc}/chats`, { query: { limit: "40" } });
   const chats = raw.data ?? raw.items ?? [];
   const live = chats.filter((c) => !c.is_archived);
-  if (chats[0]) {
-    const probe = await api<{ data?: UMessage[] }>("GET", `/v2/${acc}/chats/${seg(chats[0].id)}/messages`, { query: { limit: "5" } }).catch(() => ({ data: [] as UMessage[] }));
-    console.log("[unipile-diag] probe", JSON.stringify({ maxListTime: chats.map((c) => c.last_message_timestamp ?? "").sort().pop(), firstChatNewest: (probe.data ?? []).map((m) => `${m.timestamp}${m.is_sender ? " me" : ""}`).sort().slice(-3) }));
-  }
-  // TEMP diagnostics (no message content): account health and what the chat list looks like.
-  const health = await api<{ status?: string; initial_sync?: { status?: string }; metadata?: { products_connection_status?: Record<string, string> } }>("GET", `/v2/accounts/${acc}`).catch((e) => ({ status: `err ${(e as Error).message.slice(0, 80)}` }));
-  console.log("[unipile-diag] account", JSON.stringify({ status: health.status, sync: (health as { initial_sync?: { status?: string } }).initial_sync?.status, products: (health as { metadata?: { products_connection_status?: Record<string, string> } }).metadata?.products_connection_status }));
-  console.log("[unipile-diag] chats", JSON.stringify({ keys: Object.keys(raw), n: chats.length, sample: chats.slice(0, 3).map((c) => ({ keys: Object.keys(c).sort().join(","), unread: c.unread_count, lmt: c.last_message_timestamp ?? null, upd: c.updated_at ?? null, arch: c.is_archived })) }));
   // For the first hour Unipile is still copying history from the phone, so re-read every chat each time.
   const settling = connectedAt && Date.now() - new Date(connectedAt).getTime() < 60 * 60_000;
   const since = sinceIso && !settling ? new Date(sinceIso).getTime() - 5 * 60_000 : 0;
