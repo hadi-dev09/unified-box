@@ -202,8 +202,12 @@ async function syncUnipile(acct: Acct & { provider: string; remote_id: string; l
     return { accountId: acct.id, synced, changed: synced > 0 };
   } catch (e) {
     const msg = String((e as Error).message ?? e);
-    const reauth = /\b(401|403)\b|disconnected|credentials/i.test(msg);
-    await db.from("accounts").update({ status: reauth ? "needs_reauth" : "error", status_detail: msg.slice(0, 300) }).eq("id", acct.id);
+    const { unipileAccountDown, logSyncEvent } = await import("./unipile");
+    await logSyncEvent(acct.id, "sync_error", msg);
+    // Only ask the person to reconnect when Unipile says the account is really disconnected; hiccups retry by themselves.
+    if (await unipileAccountDown(acct.remote_id)) {
+      await db.from("accounts").update({ status: "needs_reauth", status_detail: "Disconnected. Click Reconnect to sign in again." }).eq("id", acct.id);
+    }
     return { accountId: acct.id, synced: 0, error: msg };
   }
 }

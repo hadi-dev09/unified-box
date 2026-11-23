@@ -25,6 +25,7 @@ export async function backgroundSync(budgetMs = 50_000) {
   const db = supabaseAdmin();
   const now = new Date().toISOString();
   await db.from("threads").update({ snoozed_until: null, unread: true }).lte("snoozed_until", now);
+  await db.from("sync_events").delete().lt("at", new Date(Date.now() - 24 * 3600_000).toISOString()).then(() => null, () => null);
   const { sendDueScheduled } = await import("./send");
   const scheduled = await sendDueScheduled().catch(() => ({ due: 0, sent: 0 }));
   const { data } = await db.from("accounts").select("id, last_synced_at, provider, remote_id").in("status", ["connected", "error"]);

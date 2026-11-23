@@ -331,3 +331,18 @@ export async function unipileAttachment(remoteId: string, chatId: string, messag
     headers: { "X-API-KEY": env("UNIPILE_API_KEY") },
   });
 }
+
+/** Short operational log (event names, timings and error text only; never message content). Kept for a day. */
+export async function logSyncEvent(accountId: string | null, kind: string, detail?: string) {
+  await supabaseAdmin().from("sync_events").insert({ account_id: accountId, kind, detail: detail?.slice(0, 300) ?? null }).then(() => null, () => null);
+}
+
+/** Is the account really disconnected at Unipile (needs the person to sign in again), or was it a passing hiccup? */
+export async function unipileAccountDown(remoteId: string): Promise<boolean> {
+  try {
+    const a = await api<{ status?: string }>("GET", `/v2/accounts/${seg(remoteId)}`);
+    return a.status === "disconnected";
+  } catch (e) {
+    return e instanceof UnipileError && e.status === 404;
+  }
+}

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { later } from "@/lib/later";
-import { payloadAccountId, payloadValue, saveConnectedAccount, validWebhookKey } from "@/lib/unipile";
+import { logSyncEvent, payloadAccountId, payloadValue, saveConnectedAccount, unipileAccountDown, validWebhookKey } from "@/lib/unipile";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { syncAccount } from "@/lib/sync";
 
@@ -18,9 +18,15 @@ export async function POST(req: NextRequest) {
     if (state) await saveConnectedAccount(state, acc).catch(() => null);
     const db = supabaseAdmin();
     const event = String(b.event ?? b.type ?? "");
-    if (/account\.status\.disconnected/.test(event)) {
-      await db.from("accounts").update({ status: "needs_reauth", status_detail: "Disconnected. Click Reconnect to sign in again." }).eq("remote_id", acc);
+    const { data: ours } = await db.from("accounts").select("id").eq("remote_id", acc).limit(1);
+    await logSyncEvent((ours?.[0]?.id as string | undefined) ?? null, "webhook", event || "unknown");
+    if (/account\.status\.(disconnected|errored)/.test(event)) {
+      // Unipile reports short drops too; flag only if it's still down when we ask.
+      if (await unipileAccountDown(acc)) await db.from("accounts").update({ status: "needs_reauth", status_detail: "Disconnected. Click Reconnect to sign in again." }).eq("remote_id", acc);
       return;
+    }
+    if (/account\.status\.running|account\.reconnect/.test(event)) {
+      await db.from("accounts").update({ status: "connected", status_detail: null }).eq("remote_id", acc);
     }
     // A new message in one chat: fetch just that chat (fast); anything else: refresh the account.
     const chatId = /^message\./.test(event) ? payloadValue(b, "chat_id") : null;

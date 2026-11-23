@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { currentUser } from "@/lib/auth";
 import { quickSlackReadCheck } from "@/lib/slack";
-import { quickUnipileCheck } from "@/lib/unipile";
+import { logSyncEvent, quickUnipileCheck } from "@/lib/unipile";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
 /**
@@ -15,7 +15,7 @@ export async function POST() {
   const rows = (data ?? []) as { id: string; provider: string; remote_id: string | null }[];
   const jobs = [
     ...rows.filter((a) => a.provider === "slack").map((a) => quickSlackReadCheck(a.id).catch(() => 0)),
-    ...rows.filter((a) => a.remote_id).map((a) => quickUnipileCheck(a.id).catch(() => 0)),
+    ...rows.filter((a) => a.remote_id).map((a) => quickUnipileCheck(a.id).catch(async (e) => { await logSyncEvent(a.id, "fast_error", String((e as Error).message)); return 0; })),
   ];
   const changed = (await Promise.all(jobs)).reduce((x, y) => x + y, 0);
   return NextResponse.json({ changed });

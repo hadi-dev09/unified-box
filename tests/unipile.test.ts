@@ -101,10 +101,21 @@ test("unipile v2: webhook needs our key, finds the account anywhere in the paylo
   assert.equal(payloadAccountId({ data: { id: "acc_nope" } }), null);
   const no = await hook.POST(new NextRequest("https://app.test/api/webhooks/unipile", { method: "POST", body: JSON.stringify({ account_id: "acc_w1" }) }));
   assert.equal(no.status, 401);
-  const yes = await hook.POST(new NextRequest(`https://app.test/api/webhooks/unipile?k=${webhookKey()}`, { method: "POST", body: JSON.stringify({ event: "account.status.disconnected", account_id: "acc_w1" }) }));
-  assert.equal(yes.status, 200);
-  await new Promise((r) => setTimeout(r, 20));
-  assert.equal(db.rows("accounts").find((a) => a.id === "w1")!.status, "needs_reauth");
+  // A short drop that Unipile already recovered from doesn't ask the person to reconnect...
+  let up = "running";
+  const net = stubFetch((c) => (c.url === "https://api.unipile.com/v2/accounts/acc_w1" ? { object: "Account", id: "acc_w1", provider: "whatsapp", status: up } : undefined));
+  try {
+    const blip = await hook.POST(new NextRequest(`https://app.test/api/webhooks/unipile?k=${webhookKey()}`, { method: "POST", body: JSON.stringify({ event: "account.status.disconnected", account_id: "acc_w1" }) }));
+    assert.equal(blip.status, 200);
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(db.rows("accounts").find((a) => a.id === "w1")!.status, "connected");
+    // ...a real disconnect does.
+    up = "disconnected";
+    await hook.POST(new NextRequest(`https://app.test/api/webhooks/unipile?k=${webhookKey()}`, { method: "POST", body: JSON.stringify({ event: "account.status.disconnected", account_id: "acc_w1" }) }));
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(db.rows("accounts").find((a) => a.id === "w1")!.status, "needs_reauth");
+    assert.ok(db.rows("sync_events").some((e) => e.kind === "webhook" && e.detail === "account.status.disconnected"));
+  } finally { net.restore(); }
 });
 
 test("unipile v2: chats without a time are still re-read, phone reads clear unread, and a pushed message fetches just its chat", async () => {
