@@ -16,11 +16,11 @@ const seenAfter = (seenAt: string | null | undefined, at: string) => Boolean(see
  *  3. updates unread flags on existing threads when they change (e.g. read elsewhere).
  * Opening a thread in Unified Box keeps it read until a newer message arrives. Failures set a visible status.
  */
-export async function syncAccount(accountId: string): Promise<SyncResult> {
+export async function syncAccount(accountId: string, opts: { chatId?: string } = {}): Promise<SyncResult> {
   const db = supabaseAdmin();
   const { data: acct } = await db.from("accounts").select("*").eq("id", accountId).single();
   if (!acct) return { accountId, synced: 0 };
-  if (acct.remote_id) return syncUnipile(acct);
+  if (acct.remote_id) return syncUnipile(acct, opts);
   if (acct.provider === "slack") return syncSlack(accountId);
   if (acct.provider === "imap") return syncImap(acct);
   if (acct.provider === "whatsapp" || acct.provider === "whatsapp_web") {
@@ -175,14 +175,27 @@ async function syncOutlook(acct: Acct): Promise<SyncResult> {
 }
 
 /** Accounts connected through Unipile (Gmail/Outlook/other email, WhatsApp, Telegram, Instagram, Messenger, LinkedIn). */
-async function syncUnipile(acct: Acct & { provider: string; remote_id: string; last_synced_at: string | null; created_at?: string | null }): Promise<SyncResult> {
+async function syncUnipile(acct: Acct & { provider: string; remote_id: string; last_synced_at: string | null; created_at?: string | null }, opts: { chatId?: string } = {}): Promise<SyncResult> {
   const db = supabaseAdmin();
   try {
-    const { unipileRecent } = await import("./unipile");
-    const { convs } = await unipileRecent(acct.remote_id, acct.provider, acct.external_id, acct.last_synced_at, acct.created_at);
+    const { unipileRecent, unipileOneChat } = await import("./unipile");
+    const { convs, readState } = opts.chatId
+      ? { convs: [await unipileOneChat(acct.remote_id, opts.chatId, acct.external_id)].filter(Boolean) as NonNullable<Awaited<ReturnType<typeof unipileOneChat>>>[], readState: [] }
+      : await unipileRecent(acct.remote_id, acct.provider, acct.external_id, acct.last_synced_at, acct.created_at);
     const rules = convs.length ? await loadRules(acct.user_id) : [];
     let synced = 0;
     for (const c of convs) { await storeConversation(acct, c.ext, c.msgs, c.unread, rules, c.title); synced += c.msgs.length; }
+    // Read/unread changed on the phone (no new message): mirror it here.
+    const fetched = new Set(convs.map((c) => c.ext));
+    const rest = readState.filter((r) => !fetched.has(r.ext));
+    if (rest.length) {
+      const { data: rows } = await db.from("threads").select("id, external_id, unread").eq("account_id", acct.id).in("external_id", rest.map((r) => r.ext));
+      const want = new Map(rest.map((r) => [r.ext, r.unread]));
+      for (const t of (rows ?? []) as { id: string; external_id: string; unread: boolean }[]) {
+        const u = want.get(t.external_id)!;
+        if (u !== t.unread) await db.from("threads").update({ unread: u, ...(u ? {} : { seen_at: new Date().toISOString() }) }).eq("id", t.id);
+      }
+    }
     await db.from("accounts").update({ status: "connected", status_detail: null, last_synced_at: new Date().toISOString() }).eq("id", acct.id);
     return { accountId: acct.id, synced, changed: synced > 0 };
   } catch (e) {

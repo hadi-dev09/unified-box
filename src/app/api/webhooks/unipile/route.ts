@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { later } from "@/lib/later";
-import { payloadAccountId, saveConnectedAccount, validWebhookKey } from "@/lib/unipile";
+import { payloadAccountId, payloadValue, saveConnectedAccount, validWebhookKey } from "@/lib/unipile";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { syncAccount } from "@/lib/sync";
 
@@ -22,8 +22,10 @@ export async function POST(req: NextRequest) {
       await db.from("accounts").update({ status: "needs_reauth", status_detail: "Disconnected. Click Reconnect to sign in again." }).eq("remote_id", acc);
       return;
     }
+    // A new message in one chat: fetch just that chat (fast); anything else: refresh the account.
+    const chatId = /^message\./.test(event) ? payloadValue(b, "chat_id") : null;
     const { data } = await db.from("accounts").select("id").eq("remote_id", acc);
-    for (const a of (data ?? []) as { id: string }[]) await syncAccount(a.id).catch(() => null);
+    for (const a of (data ?? []) as { id: string }[]) await syncAccount(a.id, chatId ? { chatId } : {}).catch(() => null);
   });
   return NextResponse.json({ ok: true });
 }

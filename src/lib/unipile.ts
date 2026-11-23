@@ -160,8 +160,34 @@ const attachmentLabel = (m: UMessage) => {
   return a.type === "img" ? "📷 Photo" : a.type === "video" ? "🎬 Video" : a.type === "audio" ? "🎤 Voice message" : a.type === "contact_card" ? "👤 Contact" : a.type === "shared_content" ? "🔗 Shared link" : `📎 ${a.filename ?? "File"}`;
 };
 
-/** Pulls recent email (grouped into conversations) or recent chats for one Unipile-connected account. */
-export async function unipileRecent(remoteId: string, provider: string, self: string, sinceIso: string | null, connectedAt?: string | null): Promise<{ convs: { ext: string; title?: string; msgs: GmailMsg[]; unread: boolean }[] }> {
+type Conv = { ext: string; title?: string; msgs: GmailMsg[]; unread: boolean };
+
+/** One chat's recent messages as a conversation. */
+async function chatConv(acc: string, c: UChat, self: string): Promise<Conv | null> {
+  const { data: msgs } = await api<{ data: UMessage[] }>("GET", `/v2/${acc}/chats/${seg(c.id)}/messages`, { query: { limit: "50" } });
+  const title = c.name || "Chat";
+  const unreadCount = Math.max(0, c.unread_count ?? 0);
+  const real = msgs.filter((m) => !m.is_event && !m.is_hidden && !m.is_deleted).sort((x, y) => x.timestamp.localeCompare(y.timestamp));
+  const unreadIds = new Set(unreadCount ? real.filter((m) => !m.is_sender).slice(-unreadCount).map((m) => m.id) : []);
+  const list = real.map((m): GmailMsg => {
+    const text = (m.text ?? "").trim() || attachmentLabel(m) || "Message not shown here (for example a call, poll or sticker). Open WhatsApp to see it.";
+    const mine = Boolean(m.is_sender);
+    return {
+      id: `${c.id}:${m.id}`, threadId: c.id, subject: title, fromName: mine ? "You" : m.sender?.display_name || title, fromAddr: mine ? self : m.sender_id ?? "",
+      to: [], cc: [], messageId: "", body: text.slice(0, 20_000), sentAt: new Date(m.timestamp).toISOString(), snippet: text.slice(0, 160),
+      unread: unreadIds.has(m.id), outgoing: mine, automated: false,
+    };
+  });
+  // unread_count -1 = marked unread by hand.
+  return list.length ? { ext: c.id, title, msgs: list, unread: (c.unread_count ?? 0) !== 0 } : null;
+}
+
+/**
+ * Pulls recent email (grouped into conversations) or recent chats for one Unipile-connected account.
+ * For chats it also returns every listed chat's read state, so "read on the phone" shows here without
+ * downloading messages again.
+ */
+export async function unipileRecent(remoteId: string, provider: string, self: string, sinceIso: string | null, connectedAt?: string | null): Promise<{ convs: Conv[]; readState: { ext: string; unread: boolean }[] }> {
   const acc = seg(remoteId);
   if (isUnipileEmail(provider)) {
     const { data } = await api<{ data: UEmail[] }>("GET", `/v2/${acc}/emails`, { query: { limit: "50" } });
@@ -170,33 +196,40 @@ export async function unipileRecent(remoteId: string, provider: string, self: st
       const m = emailToMsg(e, self);
       byThread.set(m.threadId, [...(byThread.get(m.threadId) ?? []), m]);
     }
-    return { convs: [...byThread].map(([ext, msgs]) => ({ ext, msgs, unread: msgs.some((m) => m.unread) })) };
+    return { convs: [...byThread].map(([ext, msgs]) => ({ ext, msgs, unread: msgs.some((m) => m.unread) })), readState: [] };
   }
   const { data: chats } = await api<{ data: UChat[] }>("GET", `/v2/${acc}/chats`, { query: { limit: "40" } });
+  const live = chats.filter((c) => !c.is_archived);
   // For the first hour Unipile is still copying history from the phone, so re-read every chat each time.
   const settling = connectedAt && Date.now() - new Date(connectedAt).getTime() < 60 * 60_000;
   const since = sinceIso && !settling ? new Date(sinceIso).getTime() - 5 * 60_000 : 0;
-  const convs: { ext: string; title?: string; msgs: GmailMsg[]; unread: boolean }[] = [];
-  const recent = chats.filter((c) => !c.is_archived && (!since || new Date(c.last_message_timestamp ?? c.updated_at ?? 0).getTime() >= since)).slice(0, 20);
-  for (const c of recent) {
-    const { data: msgs } = await api<{ data: UMessage[] }>("GET", `/v2/${acc}/chats/${seg(c.id)}/messages`, { query: { limit: "50" } });
-    const title = c.name || "Chat";
-    const unreadCount = Math.max(0, c.unread_count ?? 0);
-    const real = msgs.filter((m) => !m.is_event && !m.is_hidden && !m.is_deleted).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-    const unreadIds = new Set(unreadCount ? real.filter((m) => !m.is_sender).slice(-unreadCount).map((m) => m.id) : []);
-    const list = real.map((m): GmailMsg => {
-      const text = (m.text ?? "").trim() || attachmentLabel(m) || "Message not shown here (for example a call, poll or sticker). Open WhatsApp to see it.";
-      const mine = Boolean(m.is_sender);
-      return {
-        id: `${c.id}:${m.id}`, threadId: c.id, subject: title, fromName: mine ? "You" : m.sender?.display_name || title, fromAddr: mine ? self : m.sender_id ?? "",
-        to: [], cc: [], messageId: "", body: text.slice(0, 20_000), sentAt: new Date(m.timestamp).toISOString(), snippet: text.slice(0, 160),
-        unread: unreadIds.has(m.id), outgoing: mine, automated: false,
-      };
-    });
-    // unread_count -1 = marked unread by hand in the app.
-    if (list.length) convs.push({ ext: c.id, title, msgs: list, unread: (c.unread_count ?? 0) !== 0 });
-  }
-  return { convs };
+  const when = (c: UChat) => c.last_message_timestamp ?? c.updated_at;
+  // Chats with a newer message, plus (when Unipile gives no time) the most recent ones, which the list is sorted by.
+  const pick = since
+    ? live.filter((c, i) => (when(c) ? new Date(when(c)!).getTime() >= since : i < 10)).slice(0, 20)
+    : live.slice(0, 25);
+  const convs: Conv[] = [];
+  for (const c of pick) { const conv = await chatConv(acc, c, self); if (conv) convs.push(conv); }
+  return { convs, readState: live.map((c) => ({ ext: c.id, unread: (c.unread_count ?? 0) !== 0 })) };
+}
+
+/** Just one chat, right after Unipile tells us it has a new message. */
+export async function unipileOneChat(remoteId: string, chatId: string, self: string): Promise<Conv | null> {
+  const acc = seg(remoteId);
+  const c = await api<UChat>("GET", `/v2/${acc}/chats/${seg(chatId)}`);
+  return chatConv(acc, { ...c, id: c.id || chatId }, self);
+}
+
+/** Finds a value by key anywhere in a webhook payload (e.g. chat_id). */
+export function payloadValue(b: unknown, key: string): string | null {
+  const walk = (v: unknown, depth: number): string | null => {
+    if (depth > 4 || !v || typeof v !== "object") return null;
+    const o = v as Record<string, unknown>;
+    if (typeof o[key] === "string" && o[key]) return o[key] as string;
+    for (const x of Object.values(o)) { const r = walk(x, depth + 1); if (r) return r; }
+    return null;
+  };
+  return walk(b, 0);
 }
 
 // ---------- write ----------

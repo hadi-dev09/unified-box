@@ -106,3 +106,28 @@ test("unipile v2: webhook needs our key, finds the account anywhere in the paylo
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(db.rows("accounts").find((a) => a.id === "w1")!.status, "needs_reauth");
 });
+
+test("unipile v2: chats without a time are still re-read, phone reads clear unread, and a pushed message fetches just its chat", async () => {
+  const { syncAccount } = await import("../src/lib/sync");
+  db.rows("accounts").push({ id: "w2", user_id: A.id, provider: "whatsapp_web", display_name: "+1", external_id: "+1", remote_id: "acc_w2", status: "connected", can_send: true, last_synced_at: new Date().toISOString(), created_at: "2026-01-01T00:00:00.000Z" });
+  db.rows("threads").push({ id: "tw2", user_id: A.id, account_id: "w2", external_id: "c2", subject: "Old", unread: true, last_message_at: "2026-11-20T10:00:00.000Z" });
+  const msg = (id: string, text: string, ts: string) => ({ object: "Message", id, text, sender_id: "u", sender: { display_name: "Zara" }, is_sender: false, timestamp: ts, is_event: false, is_hidden: false, is_deleted: false });
+  let net = stubFetch((c) => {
+    if (c.url.startsWith(`${U}/acc_w2/chats?`)) return { data: [{ object: "Chat", id: "c1", name: "Zara", unread_count: 1, is_archived: false }, { object: "Chat", id: "c2", name: "Old", unread_count: 0, is_archived: false }] };
+    if (c.url.startsWith(`${U}/acc_w2/chats/c1/messages`)) return { data: [msg("n1", "test 1", new Date().toISOString())] };
+    if (c.url.startsWith(`${U}/acc_w2/chats/c2/messages`)) return { data: [msg("o1", "old", "2026-11-20T10:00:00.000Z")] };
+    return undefined;
+  });
+  try { await syncAccount("w2"); } finally { net.restore(); }
+  assert.ok(db.rows("messages").some((m) => m.external_id === "c1:n1" && m.body_text === "test 1"), "new message arrives though the chat list has no times");
+  assert.equal(db.rows("threads").find((t) => t.id === "tw2")!.unread, false, "read on the phone -> read here");
+
+  net = stubFetch((c) => {
+    if (c.url === `${U}/acc_w2/chats/c1`) return { object: "Chat", id: "c1", name: "Zara", unread_count: 2, is_archived: false };
+    if (c.url.startsWith(`${U}/acc_w2/chats/c1/messages`)) return { data: [msg("n1", "test 1", new Date().toISOString()), msg("n2", "test 2", new Date().toISOString())] };
+    return undefined;
+  });
+  try { await syncAccount("w2", { chatId: "c1" }); } finally { net.restore(); }
+  assert.ok(db.rows("messages").some((m) => m.external_id === "c1:n2"));
+  assert.ok(net.calls.every((c) => !c.url.includes("/chats?")), "only that chat was fetched");
+});
