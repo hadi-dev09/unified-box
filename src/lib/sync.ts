@@ -175,11 +175,11 @@ async function syncOutlook(acct: Acct): Promise<SyncResult> {
 }
 
 /** Accounts connected through Unipile (Gmail/Outlook/other email, WhatsApp, Telegram, Instagram, Messenger, LinkedIn). */
-async function syncUnipile(acct: Acct & { provider: string; remote_id: string; last_synced_at: string | null }): Promise<SyncResult> {
+async function syncUnipile(acct: Acct & { provider: string; remote_id: string; last_synced_at: string | null; created_at?: string | null }): Promise<SyncResult> {
   const db = supabaseAdmin();
   try {
     const { unipileRecent } = await import("./unipile");
-    const { convs } = await unipileRecent(acct.remote_id, acct.provider, acct.external_id, acct.last_synced_at);
+    const { convs } = await unipileRecent(acct.remote_id, acct.provider, acct.external_id, acct.last_synced_at, acct.created_at);
     const rules = convs.length ? await loadRules(acct.user_id) : [];
     let synced = 0;
     for (const c of convs) { await storeConversation(acct, c.ext, c.msgs, c.unread, rules, c.title); synced += c.msgs.length; }

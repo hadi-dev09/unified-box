@@ -29,7 +29,7 @@ test("unipile v2: coming back from the sign-in page adds the account for the rig
   const net = stubFetch((c) => {
     if (c.url === `${U}/accounts/acc_g1`) return { object: "Account", id: "acc_g1", provider: "google", name: "sam@gmail.com", created_at: recent(), status: "running" };
     if (c.url === `${U}/accounts/acc_old`) return { object: "Account", id: "acc_old", provider: "google", name: "victim@gmail.com", created_at: "2025-01-01T00:00:00.000Z" };
-    if (c.url === `${U}/webhooks/endpoints/`) return { object: "WebhookEndpoint", id: "we_1" };
+    if (c.url === `${U}/webhooks/endpoints/`) return c.method === "POST" ? { object: "WebhookEndpoint", id: "we_1" } : { data: [] };
     if (c.url.startsWith(`${U}/acc_g1/emails?`)) return { data: [
       { object: "Email", id: "e1", thread_id: "th1", subject: "Invoice", body_plain: "Please pay", date: "2026-11-20T10:00:00.000Z", is_unread: true, folders: ["INBOX"], message_id: "<m1@x>", from: [{ display_name: "Dana", email: "dana@client.com" }], to: [{ email: "sam@gmail.com" }] },
       { object: "Email", id: "e2", thread_id: "th1", subject: "Re: Invoice", body: "<p>Paid!</p>", date: "2026-11-20T11:00:00.000Z", is_unread: false, folders: ["SENT"], from: [{ email: "sam@gmail.com" }], to: [{ email: "dana@client.com" }] },
@@ -42,7 +42,7 @@ test("unipile v2: coming back from the sign-in page adds the account for the rig
     assert.equal(res.headers.get("location"), "https://app.test/settings?connecting=gmail");
     const acct = db.rows("accounts").find((a) => a.remote_id === "acc_g1")!;
     assert.equal(acct.user_id, A.id); assert.equal(acct.provider, "gmail"); assert.equal(acct.external_id, "sam@gmail.com");
-    assert.ok(JSON.parse(net.calls.find((c) => c.url === `${U}/webhooks/endpoints/`)!.body).url.includes("/api/webhooks/unipile?k="));
+    assert.ok(JSON.parse(net.calls.find((c) => c.url === `${U}/webhooks/endpoints/` && c.method === "POST")!.body).url.includes("/api/webhooks/unipile?k="));
     const r = await syncAccount(acct.id as string);
     assert.equal(r.synced, 2, "spam skipped");
     const t = db.rows("threads").find((x) => x.account_id === acct.id && x.external_id === "th1")!;

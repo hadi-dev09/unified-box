@@ -27,9 +27,16 @@ export async function backgroundSync(budgetMs = 50_000) {
   await db.from("threads").update({ snoozed_until: null, unread: true }).lte("snoozed_until", now);
   const { sendDueScheduled } = await import("./send");
   const scheduled = await sendDueScheduled().catch(() => ({ due: 0, sent: 0 }));
-  const { data } = await db.from("accounts").select("id, last_synced_at, provider").in("status", ["connected", "error"]);
+  const { data } = await db.from("accounts").select("id, last_synced_at, provider, remote_id").in("status", ["connected", "error"]);
+  // Unipile accounts: make sure Unipile pushes new messages to us (retried here until it works).
+  if ((data ?? []).some((a: { remote_id: string | null }) => a.remote_id)) {
+    const { ensureWebhooks } = await import("./unipile");
+    await ensureWebhooks().catch(() => null);
+  }
+  // WhatsApp Business (Cloud API) and the self-hosted QR gateway push messages; Unipile accounts are also polled.
+  const pushOnly = (a: { provider: string; remote_id: string | null }) => !a.remote_id && (a.provider === "whatsapp" || a.provider === "whatsapp_web");
   const due = (data ?? [])
-    .filter((a: { last_synced_at: string | null; provider: string }) => a.provider !== "whatsapp" && a.provider !== "whatsapp_web" && (!a.last_synced_at || Date.now() - new Date(a.last_synced_at).getTime() > dueAfterMs(a.provider)))
+    .filter((a: { last_synced_at: string | null; provider: string; remote_id: string | null }) => !pushOnly(a) && (!a.last_synced_at || Date.now() - new Date(a.last_synced_at).getTime() > dueAfterMs(a.provider)))
     .sort((a: { last_synced_at: string | null }, b: { last_synced_at: string | null }) => String(a.last_synced_at ?? "").localeCompare(String(b.last_synced_at ?? "")));
   // Slack read state is cheap to check, so do it every minute (history polling is the slow part).
   const slackIds = (data ?? []).filter((a: { provider: string }) => a.provider === "slack").map((a: { id: string }) => a.id);

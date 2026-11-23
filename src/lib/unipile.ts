@@ -102,11 +102,23 @@ export async function ensureWebhooks() {
   const marker = createHmac("sha256", secret("marker")).update(url).digest("hex").slice(0, 16);
   const { data } = await db.from("internal_config").select("value").eq("name", "unipile_webhook").maybeSingle();
   if (data?.value === marker) return;
-  await api("POST", "/v2/webhooks/endpoints/", { json: {
-    url, description: "Unified Box",
-    trigger_events: ["message.new", "message.update", "chat.update", "email.new", "email.update", "account.add", "account.reconnect", "account.status.disconnected", "account.status.running"],
-  } });
-  await db.from("internal_config").upsert({ name: "unipile_webhook", value: marker, updated_at: new Date().toISOString() });
+  try {
+    // Reuse ours if it already exists (e.g. a previous attempt that timed out after Unipile saved it).
+    const list = await api<{ data?: { url: string }[] }>("GET", "/v2/webhooks/endpoints/").catch(() => ({ data: [] as { url: string }[] }));
+    if (!(list.data ?? []).some((w) => w.url === url)) {
+      await api("POST", "/v2/webhooks/endpoints/", { json: {
+        url, description: "Unified Box",
+        trigger_events: ["message.new", "message.update", "chat.update", "email.new", "email.update", "account.add", "account.reconnect", "account.status.disconnected", "account.status.running"],
+      } });
+    }
+    await db.from("internal_config").upsert({ name: "unipile_webhook", value: marker, updated_at: new Date().toISOString() });
+    await db.from("internal_config").delete().eq("name", "unipile_webhook_error");
+  } catch (e) {
+    // Keep the reason visible for diagnosis (never contains the key: the URL's key is masked).
+    const msg = String((e as Error).message).replace(/k=[0-9a-f]+/g, "k=…").slice(0, 500);
+    await db.from("internal_config").upsert({ name: "unipile_webhook_error", value: msg, updated_at: new Date().toISOString() });
+    throw e;
+  }
 }
 
 export async function unipileDisconnect(remoteId: string) {
@@ -143,11 +155,11 @@ export function emailToMsg(e: UEmail, self: string): GmailMsg {
 const attachmentLabel = (m: UMessage) => {
   const a = m.attachments?.[0];
   if (!a) return "";
-  return a.type === "img" ? "📷 Photo" : a.type === "video" ? "🎬 Video" : a.type === "audio" ? "🎤 Voice message" : `📎 ${a.filename ?? "File"}`;
+  return a.type === "img" ? "📷 Photo" : a.type === "video" ? "🎬 Video" : a.type === "audio" ? "🎤 Voice message" : a.type === "contact_card" ? "👤 Contact" : a.type === "shared_content" ? "🔗 Shared link" : `📎 ${a.filename ?? "File"}`;
 };
 
 /** Pulls recent email (grouped into conversations) or recent chats for one Unipile-connected account. */
-export async function unipileRecent(remoteId: string, provider: string, self: string, sinceIso: string | null): Promise<{ convs: { ext: string; title?: string; msgs: GmailMsg[]; unread: boolean }[] }> {
+export async function unipileRecent(remoteId: string, provider: string, self: string, sinceIso: string | null, connectedAt?: string | null): Promise<{ convs: { ext: string; title?: string; msgs: GmailMsg[]; unread: boolean }[] }> {
   const acc = seg(remoteId);
   if (isUnipileEmail(provider)) {
     const { data } = await api<{ data: UEmail[] }>("GET", `/v2/${acc}/emails`, { query: { limit: "50" } });
@@ -158,18 +170,20 @@ export async function unipileRecent(remoteId: string, provider: string, self: st
     }
     return { convs: [...byThread].map(([ext, msgs]) => ({ ext, msgs, unread: msgs.some((m) => m.unread) })) };
   }
-  const { data: chats } = await api<{ data: UChat[] }>("GET", `/v2/${acc}/chats`, { query: { limit: "30" } });
-  const since = sinceIso ? new Date(sinceIso).getTime() - 5 * 60_000 : 0;
+  const { data: chats } = await api<{ data: UChat[] }>("GET", `/v2/${acc}/chats`, { query: { limit: "40" } });
+  // For the first hour Unipile is still copying history from the phone, so re-read every chat each time.
+  const settling = connectedAt && Date.now() - new Date(connectedAt).getTime() < 60 * 60_000;
+  const since = sinceIso && !settling ? new Date(sinceIso).getTime() - 5 * 60_000 : 0;
   const convs: { ext: string; title?: string; msgs: GmailMsg[]; unread: boolean }[] = [];
   const recent = chats.filter((c) => !c.is_archived && (!since || new Date(c.last_message_timestamp ?? c.updated_at ?? 0).getTime() >= since)).slice(0, 20);
   for (const c of recent) {
-    const { data: msgs } = await api<{ data: UMessage[] }>("GET", `/v2/${acc}/chats/${seg(c.id)}/messages`, { query: { limit: "30" } });
+    const { data: msgs } = await api<{ data: UMessage[] }>("GET", `/v2/${acc}/chats/${seg(c.id)}/messages`, { query: { limit: "50" } });
     const title = c.name || "Chat";
     const unreadCount = Math.max(0, c.unread_count ?? 0);
     const real = msgs.filter((m) => !m.is_event && !m.is_hidden && !m.is_deleted).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
     const unreadIds = new Set(unreadCount ? real.filter((m) => !m.is_sender).slice(-unreadCount).map((m) => m.id) : []);
     const list = real.map((m): GmailMsg => {
-      const text = (m.text ?? "").trim() || attachmentLabel(m) || "Message";
+      const text = (m.text ?? "").trim() || attachmentLabel(m) || "Message not shown here (for example a call, poll or sticker). Open WhatsApp to see it.";
       const mine = Boolean(m.is_sender);
       return {
         id: `${c.id}:${m.id}`, threadId: c.id, subject: title, fromName: mine ? "You" : m.sender?.display_name || title, fromAddr: mine ? self : m.sender_id ?? "",
