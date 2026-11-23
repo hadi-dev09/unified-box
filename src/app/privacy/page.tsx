@@ -22,7 +22,7 @@ export default function Privacy() {
       <p>Unified Box&apos;s use and transfer of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements.</p>
       <h2>Storage and security</h2>
       <ul>
-        <li>Data is stored with our infrastructure providers (Supabase for the database, Vercel for hosting).</li>
+        <li>Data is stored with our infrastructure providers (Supabase for the database, Vercel for hosting). Accounts you connect through our sign-in partner Unipile (for example Gmail, Outlook, WhatsApp, Telegram, Instagram, Messenger, LinkedIn) are accessed through Unipile, which processes that data on our behalf only to deliver it to you.</li>
         <li>Access tokens for your connected accounts are encrypted. AI access tokens and keys are stored only as one-way hashes.</li>
         <li>Each person can only see their own data.</li>
       </ul>
