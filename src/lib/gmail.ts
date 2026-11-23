@@ -125,7 +125,10 @@ const header = (p: Part, n: string) => p.headers?.find((h) => h.name.toLowerCase
 export type GmailMsg = {
   id: string; threadId: string; subject: string; fromName: string; fromAddr: string;
   to: string[]; cc: string[]; messageId: string; body: string; sentAt: string; snippet: string; unread: boolean; outgoing: boolean; automated: boolean;
+  /** Chat media (photo, video, voice note, file): shown inline, downloaded on demand. */
+  attachments?: MsgAttachment[];
 };
+export type MsgAttachment = { id: string; type: "img" | "video" | "audio" | "file" | "other"; name?: string; mime?: string; voice?: boolean };
 
 const addrList = (v: string) => v.split(",").map((s) => parseFrom(s).addr).filter((a) => a.includes("@"));
 

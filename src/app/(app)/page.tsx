@@ -66,7 +66,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
 
   const [{ data: threadRows }, { data: msgRows }, { data: cur }, { data: aiDrafts }] = await Promise.all([
     tq,
-    thread ? sb.from("messages").select("id, from_name, from_addr, to_addrs, cc_addrs, sent_at, is_outgoing, body_text, subject, external_id, thread_ts").eq("thread_id", thread).order("sent_at") : Promise.resolve({ data: null }),
+    thread ? sb.from("messages").select("id, from_name, from_addr, to_addrs, cc_addrs, sent_at, is_outgoing, body_text, subject, external_id, thread_ts, attachments").eq("thread_id", thread).order("sent_at") : Promise.resolve({ data: null }),
     thread ? sb.from("threads").select("id, subject, client_id, unread, external_id, account_id, starred").eq("id", thread).maybeSingle() : Promise.resolve({ data: null }),
     thread ? sb.from("drafts").select("id, subject, body, to_addrs, cc_addrs, created_by, status, send_at, mode, created_at").eq("thread_id", thread).in("status", ["pending", "scheduled"]).order("created_at") : Promise.resolve({ data: null }),
   ]);

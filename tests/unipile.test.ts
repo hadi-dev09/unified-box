@@ -158,3 +158,24 @@ test("unipile v2: fast check (app open) fetches only chats with a newer message 
     assert.equal(net.calls.length, n);
   } finally { net.restore(); }
 });
+
+test("media: only the message owner can load its attachment, and non-media downloads instead of rendering", async () => {
+  const media = await import("../src/app/api/media/route");
+  db.rows("accounts").push({ id: "w4", user_id: A.id, provider: "whatsapp_web", display_name: "+4", external_id: "+4", remote_id: "acc_w4", status: "connected" });
+  db.rows("messages").push({ id: "11111111-1111-4111-8111-111111111111", user_id: A.id, account_id: "w4", thread_id: "x", external_id: "chatA:msgA", attachments: [{ id: "att1", type: "img", mime: "image/jpeg" }, { id: "att2", type: "file", name: "a.html" }] });
+  const prev = db.user;
+  const net = stubFetch((c) => c.url.endsWith("/attachments/att1") ? new Response("jpegbytes", { headers: { "content-type": "image/jpeg" } })
+    : c.url.endsWith("/attachments/att2") ? new Response("<script>x</script>", { headers: { "content-type": "text/html" } }) : undefined);
+  try {
+    db.user = { id: B.id, email: B.email };
+    assert.equal((await media.GET(new NextRequest("https://app.test/api/media?m=11111111-1111-4111-8111-111111111111&a=att1"))).status, 404, "someone else");
+    db.user = { id: A.id, email: A.email };
+    const ok = await media.GET(new NextRequest("https://app.test/api/media?m=11111111-1111-4111-8111-111111111111&a=att1"));
+    assert.equal(ok.status, 200); assert.equal(ok.headers.get("content-type"), "image/jpeg"); assert.equal(await ok.text(), "jpegbytes");
+    assert.ok(net.calls[0].url.endsWith("/v2/acc_w4/chats/chatA/messages/msgA/attachments/att1"));
+    const html = await media.GET(new NextRequest("https://app.test/api/media?m=11111111-1111-4111-8111-111111111111&a=att2"));
+    assert.equal(html.headers.get("content-type"), "application/octet-stream");
+    assert.match(String(html.headers.get("content-disposition")), /^attachment/);
+    assert.equal((await media.GET(new NextRequest("https://app.test/api/media?m=11111111-1111-4111-8111-111111111111&a=nope"))).status, 404, "unknown attachment id");
+  } finally { net.restore(); db.user = prev; }
+});

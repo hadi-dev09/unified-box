@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { env } from "./env";
-import type { GmailMsg } from "./gmail";
+import type { GmailMsg, MsgAttachment } from "./gmail";
 import { htmlToText, looksAutomated } from "./mail-text";
 import { supabaseAdmin } from "./supabase/admin";
 
@@ -137,7 +137,16 @@ type UEmail = {
 type UChat = { id: string; name?: string; last_message_timestamp?: string; updated_at?: string; unread_count?: number; is_archived?: boolean };
 type UMessage = {
   id: string; text?: string; sender_id?: string; sender?: { display_name?: string }; is_sender?: boolean; timestamp: string;
-  attachments?: { type?: string; filename?: string }[]; is_event?: boolean; is_hidden?: boolean; is_deleted?: boolean;
+  attachments?: { id?: string; type?: string; filename?: string; mimetype?: string; voice_note?: boolean; is_unavailable?: boolean }[]; is_event?: boolean; is_hidden?: boolean; is_deleted?: boolean;
+  event_type?: number; specifics?: unknown;
+};
+
+const toAttachments = (m: UMessage): MsgAttachment[] | undefined => {
+  const list = (m.attachments ?? []).filter((a) => a.id && !a.is_unavailable).map((a): MsgAttachment => ({
+    id: a.id!, type: a.type === "img" || a.type === "video" || a.type === "audio" || a.type === "file" ? a.type : "other",
+    ...(a.filename ? { name: a.filename } : {}), ...(a.mimetype ? { mime: a.mimetype } : {}), ...(a.voice_note ? { voice: true } : {}),
+  }));
+  return list.length ? list : undefined;
 };
 
 const SKIP_FOLDER = /^(trash|spam|junk|drafts?|deleteditems)$/i;
@@ -170,13 +179,17 @@ async function chatConv(acc: string, c: UChat, self: string): Promise<Conv | nul
   const unreadCount = Math.max(0, c.unread_count ?? 0);
   const real = msgs.filter((m) => !m.is_event && !m.is_hidden && !m.is_deleted).sort((x, y) => x.timestamp.localeCompare(y.timestamp));
   const unreadIds = new Set(unreadCount ? real.filter((m) => !m.is_sender).slice(-unreadCount).map((m) => m.id) : []);
+  for (const m of real.filter((x) => !(x.text ?? "").trim() && !x.attachments?.length)) {
+    // TEMP diagnostics: structure only, never content.
+    console.log("[unipile-diag] empty", JSON.stringify({ keys: Object.keys(m).sort().join(","), event_type: m.event_type ?? null, specifics: m.specifics && typeof m.specifics === "object" ? Object.keys(m.specifics as object) : null, provider: (m as { provider?: string }).provider }));
+  }
   const list = real.map((m): GmailMsg => {
     const text = (m.text ?? "").trim() || attachmentLabel(m) || "Message not shown here (for example a call, poll or sticker). Open WhatsApp to see it.";
     const mine = Boolean(m.is_sender);
     return {
       id: `${c.id}:${m.id}`, threadId: c.id, subject: title, fromName: mine ? "You" : m.sender?.display_name || title, fromAddr: mine ? self : m.sender_id ?? "",
       to: [], cc: [], messageId: "", body: text.slice(0, 20_000), sentAt: new Date(m.timestamp).toISOString(), snippet: text.slice(0, 160),
-      unread: unreadIds.has(m.id), outgoing: mine, automated: false,
+      unread: unreadIds.has(m.id), outgoing: mine, automated: false, attachments: toAttachments(m),
     };
   });
   // unread_count -1 = marked unread by hand.
@@ -312,4 +325,11 @@ export async function quickUnipileCheck(accountId: string): Promise<number> {
     if (u !== t.unread) { await db.from("threads").update({ unread: u, ...(u ? {} : { seen_at: new Date().toISOString() }) }).eq("id", t.id); changed++; }
   }
   return changed;
+}
+
+/** Streams one chat attachment from Unipile (photo, video, voice note, file). */
+export async function unipileAttachment(remoteId: string, chatId: string, messageId: string, attachmentId: string): Promise<Response> {
+  return fetch(`${base()}/v2/${seg(remoteId)}/chats/${seg(chatId)}/messages/${seg(messageId)}/attachments/${seg(attachmentId)}`, {
+    headers: { "X-API-KEY": env("UNIPILE_API_KEY") },
+  });
 }

@@ -124,6 +124,7 @@ export async function storeConversation(acct: Acct, ext: string, list: GmailMsg[
       user_id: acct.user_id, account_id: accountId, thread_id: t.id, external_id: m.id,
       from_addr: m.fromAddr, from_name: m.fromName, to_addrs: m.to, subject: m.subject,
       body_text: m.body, sent_at: m.sentAt, is_outgoing: m.outgoing, cc_addrs: m.cc, rfc_message_id: m.messageId || null,
+      ...(list.some((x) => x.attachments) ? { attachments: m.attachments?.length ? m.attachments : null } : {}),
     })),
     { onConflict: "account_id,external_id" },
   );

@@ -4,7 +4,26 @@ import { LocalTime } from "./local-time";
 import { MessageBody } from "./message-body";
 import { Avatar, Icon } from "./ui";
 
-export type ChatMsg = { id: string; external_id?: string | null; thread_ts?: string | null; from_name: string | null; from_addr: string | null; sent_at: string; is_outgoing: boolean; body_text: string | null };
+export type ChatAttachment = { id: string; type: "img" | "video" | "audio" | "file" | "other"; name?: string; mime?: string; voice?: boolean };
+export type ChatMsg = { id: string; external_id?: string | null; thread_ts?: string | null; from_name: string | null; from_addr: string | null; sent_at: string; is_outgoing: boolean; body_text: string | null; attachments?: ChatAttachment[] | null };
+
+const LABEL = /^(📷 Photo|🎬 Video|🎤 Voice message|📎 .*)$/;
+/** Photos and videos inline, voice notes playable, files downloadable (served through our signed-in media route). */
+function Media({ m }: { m: ChatMsg }) {
+  if (!m.attachments?.length) return null;
+  return (
+    <div className="mb-1 space-y-1.5">
+      {m.attachments.map((a) => {
+        const src = `/api/media?m=${encodeURIComponent(m.id)}&a=${encodeURIComponent(a.id)}`;
+        if (a.type === "img") return <a key={a.id} href={src} target="_blank" rel="noopener noreferrer"><img src={src} alt={a.name ?? "Photo"} loading="lazy" className="max-h-80 max-w-full rounded-xl object-contain" /></a>;
+        if (a.type === "video") return <video key={a.id} src={src} controls preload="metadata" className="max-h-80 max-w-full rounded-xl" />;
+        if (a.type === "audio") return <audio key={a.id} src={src} controls preload="none" className="w-64 max-w-full" />;
+        return <a key={a.id} href={src} className="inline-flex items-center gap-1.5 rounded-lg bg-black/10 px-2.5 py-1.5 text-sm font-medium underline-offset-2 hover:underline dark:bg-white/10">📎 {a.name ?? "Download file"}</a>;
+      })}
+    </div>
+  );
+}
+const showText = (m: ChatMsg) => !(m.attachments?.length && LABEL.test((m.body_text ?? "").trim()));
 
 /** Slack threads that have their own conversation, keyed by the parent message's ts. */
 export type ThreadLinks = Record<string, { href: string; count: number; unread: boolean; last: string }>;
@@ -44,7 +63,8 @@ export function ChatTimeline({ messages, provider, canReply, threadView = false,
                 <span className={grouped ? "invisible" : ""}><Avatar name={m.from_name || m.from_addr || "?"} you={m.is_outgoing} size="sm" /></span>
                 <div className={`max-w-[78%] rounded-2xl px-3.5 py-2 ${m.is_outgoing ? "rounded-br-md bg-[var(--accent)] text-white" : "rounded-bl-md bg-[var(--surface-2)]"}`}>
                   {!grouped && !m.is_outgoing && <p className="mb-0.5 text-xs font-semibold">{m.from_name || m.from_addr}</p>}
-                  <div className={`text-sm leading-relaxed ${m.is_outgoing ? "[&_a]:text-white [&_a]:underline" : ""}`}>{m.body_text?.trim() ? <MessageBody text={m.body_text} /> : <span className="italic opacity-70">Attachment</span>}</div>
+                  <Media m={m} />
+                  {showText(m) && <div className={`text-sm leading-relaxed ${m.is_outgoing ? "[&_a]:text-white [&_a]:underline" : ""}`}>{m.body_text?.trim() ? <MessageBody text={m.body_text} /> : <span className="italic opacity-70">Attachment</span>}</div>}
                   <p className={`mt-0.5 text-right text-[10px] ${m.is_outgoing ? "text-white/70" : "muted"}`}><LocalTime iso={m.sent_at} mode="relative" /></p>
                 </div>
               </div>
@@ -96,7 +116,8 @@ export function ChatTimeline({ messages, provider, canReply, threadView = false,
                     <span className="truncate">Replied in thread{parent ? <>: <span className="italic">“{(parent.body_text ?? "").replace(/\s+/g, " ").slice(0, 70)}”</span></> : ""}</span>
                   </p>
                 )}
-                <div className="text-[15px] leading-relaxed">{m.body_text?.trim() ? <MessageBody text={m.body_text} /> : <span className="italic muted">Attachment</span>}</div>
+                <Media m={m} />
+                {showText(m) && <div className="text-[15px] leading-relaxed">{m.body_text?.trim() ? <MessageBody text={m.body_text} /> : <span className="italic muted">Attachment</span>}</div>}
                 {!threadView && threadLinks[tsOf(m)] && (() => { const l = threadLinks[tsOf(m)]; return (
                   <Link href={l.href} className="mt-1 inline-flex items-center gap-2 rounded-lg border border-transparent px-1.5 py-1 text-xs hover:border-[var(--border)] hover:bg-[var(--surface)]">
                     <Icon name="reply" className="h-3.5 w-3.5 text-[var(--accent-text)]" />
