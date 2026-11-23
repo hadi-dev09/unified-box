@@ -203,6 +203,10 @@ export async function unipileRecent(remoteId: string, provider: string, self: st
   const raw = await api<{ data?: UChat[]; items?: UChat[] }>("GET", `/v2/${acc}/chats`, { query: { limit: "40" } });
   const chats = raw.data ?? raw.items ?? [];
   const live = chats.filter((c) => !c.is_archived);
+  if (chats[0]) {
+    const probe = await api<{ data?: UMessage[] }>("GET", `/v2/${acc}/chats/${seg(chats[0].id)}/messages`, { query: { limit: "5" } }).catch(() => ({ data: [] as UMessage[] }));
+    console.log("[unipile-diag] probe", JSON.stringify({ maxListTime: chats.map((c) => c.last_message_timestamp ?? "").sort().pop(), firstChatNewest: (probe.data ?? []).map((m) => `${m.timestamp}${m.is_sender ? " me" : ""}`).sort().slice(-3) }));
+  }
   // TEMP diagnostics (no message content): account health and what the chat list looks like.
   const health = await api<{ status?: string; initial_sync?: { status?: string }; metadata?: { products_connection_status?: Record<string, string> } }>("GET", `/v2/accounts/${acc}`).catch((e) => ({ status: `err ${(e as Error).message.slice(0, 80)}` }));
   console.log("[unipile-diag] account", JSON.stringify({ status: health.status, sync: (health as { initial_sync?: { status?: string } }).initial_sync?.status, products: (health as { metadata?: { products_connection_status?: Record<string, string> } }).metadata?.products_connection_status }));
