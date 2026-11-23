@@ -274,3 +274,42 @@ export function payloadAccountId(b: unknown): string | null {
   };
   return walk(b, "", 0);
 }
+
+/**
+ * Fast check while the app is open (every few seconds): one chat-list request, then only the chats with a newer
+ * message are downloaded, and read/unread from the phone is mirrored. At most once every 4 seconds per account.
+ */
+export async function quickUnipileCheck(accountId: string): Promise<number> {
+  const db = supabaseAdmin();
+  const { data: a } = await db.from("accounts").select("id, user_id, provider, external_id, remote_id, read_checked_at").eq("id", accountId).maybeSingle();
+  if (!a?.remote_id || isUnipileEmail(a.provider)) return 0;
+  if (a.read_checked_at && Date.now() - new Date(a.read_checked_at).getTime() < 4000) return 0;
+  await db.from("accounts").update({ read_checked_at: new Date().toISOString() }).eq("id", accountId);
+  const acc = seg(a.remote_id);
+  const { data: chats } = await api<{ data: UChat[] }>("GET", `/v2/${acc}/chats`, { query: { limit: "20" } });
+  const live = chats.filter((c) => !c.is_archived);
+  if (!live.length) return 0;
+  const { data: rows } = await db.from("threads").select("id, external_id, unread, last_message_at").eq("account_id", accountId).in("external_id", live.map((c) => c.id));
+  const known = new Map(((rows ?? []) as { id: string; external_id: string; unread: boolean; last_message_at: string }[]).map((t) => [t.external_id, t]));
+  const newer = live.filter((c) => {
+    const t = known.get(c.id), at = c.last_message_timestamp ?? c.updated_at;
+    return !t || (at && new Date(at).getTime() > new Date(t.last_message_at).getTime() + 999);
+  }).slice(0, 5);
+  let changed = 0;
+  if (newer.length) {
+    const { storeConversation } = await import("./sync");
+    const { loadRules } = await import("./clients");
+    const rules = await loadRules(a.user_id);
+    for (const c of newer) {
+      const conv = await chatConv(acc, c, a.external_id);
+      if (conv) { await storeConversation(a, conv.ext, conv.msgs, conv.unread, rules, conv.title); changed++; }
+    }
+  }
+  for (const c of live) {
+    const t = known.get(c.id);
+    if (!t || newer.includes(c)) continue;
+    const u = (c.unread_count ?? 0) !== 0;
+    if (u !== t.unread) { await db.from("threads").update({ unread: u, ...(u ? {} : { seen_at: new Date().toISOString() }) }).eq("id", t.id); changed++; }
+  }
+  return changed;
+}

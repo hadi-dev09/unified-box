@@ -131,3 +131,30 @@ test("unipile v2: chats without a time are still re-read, phone reads clear unre
   assert.ok(db.rows("messages").some((m) => m.external_id === "c1:n2"));
   assert.ok(net.calls.every((c) => !c.url.includes("/chats?")), "only that chat was fetched");
 });
+
+test("unipile v2: fast check (app open) fetches only chats with a newer message and mirrors phone reads", async () => {
+  const { quickUnipileCheck } = await import("../src/lib/unipile");
+  db.rows("accounts").push({ id: "w3", user_id: A.id, provider: "whatsapp_web", display_name: "+3", external_id: "+3", remote_id: "acc_w3", status: "connected", can_send: true });
+  db.rows("threads").push(
+    { id: "q31", user_id: A.id, account_id: "w3", external_id: "k1", subject: "Kim", unread: false, last_message_at: "2026-11-23T17:00:00.000Z" },
+    { id: "q32", user_id: A.id, account_id: "w3", external_id: "k2", subject: "Lee", unread: true, last_message_at: "2026-11-23T16:00:00.000Z" },
+  );
+  const net = stubFetch((c) => {
+    if (c.url.startsWith(`${U}/acc_w3/chats?`)) return { data: [
+      { object: "Chat", id: "k1", name: "Kim", unread_count: 1, last_message_timestamp: "2026-11-23T17:05:00.000Z", is_archived: false },
+      { object: "Chat", id: "k2", name: "Lee", unread_count: 0, last_message_timestamp: "2026-11-23T16:00:00.000Z", is_archived: false },
+    ] };
+    if (c.url.startsWith(`${U}/acc_w3/chats/k1/messages`)) return { data: [{ object: "Message", id: "z1", text: "ping", sender_id: "u", sender: { display_name: "Kim" }, is_sender: false, timestamp: "2026-11-23T17:05:00.000Z", is_event: false, is_hidden: false, is_deleted: false }] };
+    return undefined;
+  });
+  try {
+    assert.equal(await quickUnipileCheck("w3"), 2);
+    assert.ok(net.calls.every((c) => !c.url.includes("/chats/k2/messages")), "unchanged chat not downloaded");
+    assert.ok(db.rows("messages").some((m) => m.external_id === "k1:z1"));
+    assert.equal(db.rows("threads").find((t) => t.id === "q31")!.unread, true);
+    assert.equal(db.rows("threads").find((t) => t.id === "q32")!.unread, false, "read on the phone");
+    const n = net.calls.length;
+    assert.equal(await quickUnipileCheck("w3"), 0, "throttled");
+    assert.equal(net.calls.length, n);
+  } finally { net.restore(); }
+});
