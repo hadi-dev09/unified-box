@@ -179,12 +179,8 @@ async function chatConv(acc: string, c: UChat, self: string): Promise<Conv | nul
   const unreadCount = Math.max(0, c.unread_count ?? 0);
   const real = msgs.filter((m) => !m.is_event && !m.is_hidden && !m.is_deleted).sort((x, y) => x.timestamp.localeCompare(y.timestamp));
   const unreadIds = new Set(unreadCount ? real.filter((m) => !m.is_sender).slice(-unreadCount).map((m) => m.id) : []);
-  for (const m of real.filter((x) => !(x.text ?? "").trim() && !x.attachments?.length)) {
-    // TEMP diagnostics: structure only, never content.
-    console.log("[unipile-diag] empty", JSON.stringify({ keys: Object.keys(m).sort().join(","), event_type: m.event_type ?? null, specifics: m.specifics && typeof m.specifics === "object" ? Object.keys(m.specifics as object) : null, provider: (m as { provider?: string }).provider }));
-  }
   const list = real.map((m): GmailMsg => {
-    const text = (m.text ?? "").trim() || attachmentLabel(m) || "Message not shown here (for example a call, poll or sticker). Open WhatsApp to see it.";
+    const text = (m.text ?? "").trim() || attachmentLabel(m) || "WhatsApp doesn't share this message with linked devices (for example view-once media, a poll or a call). Open WhatsApp on your phone to see it.";
     const mine = Boolean(m.is_sender);
     return {
       id: `${c.id}:${m.id}`, threadId: c.id, subject: title, fromName: mine ? "You" : m.sender?.display_name || title, fromAddr: mine ? self : m.sender_id ?? "",
