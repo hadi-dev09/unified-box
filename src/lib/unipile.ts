@@ -5,34 +5,36 @@ import { htmlToText, looksAutomated } from "./mail-text";
 import { supabaseAdmin } from "./supabase/admin";
 
 /**
- * Unipile (unipile.com) connects people's accounts for us through its hosted sign-in page:
+ * Unipile (unipile.com, API v2) connects people's accounts through its hosted sign-in page:
  * Gmail and Outlook through Unipile's own verified Google/Microsoft apps (no "unverified app" screen, no
- * Google review for us), WhatsApp by scanning a QR code (Unipile keeps the session running on its servers),
- * Telegram, Instagram, Messenger, LinkedIn and any IMAP mailbox (Yahoo, iCloud, …).
- * Endpoints and field names follow Unipile's official Node SDK (unipile-node-sdk 1.9.x).
- * Turned on by two settings from the Unipile dashboard: UNIPILE_DSN (e.g. api8.unipile.com:13851) and UNIPILE_API_KEY.
+ * Google review for us), WhatsApp by scanning a QR code (Unipile keeps the session running), Telegram,
+ * Instagram, Messenger, LinkedIn and any IMAP mailbox (Yahoo, iCloud, …).
+ * Endpoints and fields follow Unipile's v2 OpenAPI reference (base https://api.unipile.com, header X-API-KEY).
+ * Turned on by one setting from the Unipile dashboard: UNIPILE_API_KEY.
  */
 
-export const unipileConfigured = () => Boolean(process.env.UNIPILE_DSN && process.env.UNIPILE_API_KEY);
+export const unipileConfigured = () => Boolean(process.env.UNIPILE_API_KEY);
 
-/** Our channel id → Unipile provider name. */
+/** Our channel id → Unipile provider. */
 export const UNIPILE_PROVIDER: Record<string, string> = {
-  gmail: "GOOGLE", outlook: "OUTLOOK", imap: "MAIL", whatsapp_web: "WHATSAPP", telegram: "TELEGRAM",
-  instagram: "INSTAGRAM", messenger: "MESSENGER", linkedin: "LINKEDIN",
+  gmail: "google", outlook: "outlook", imap: "imap", whatsapp_web: "whatsapp", telegram: "telegram",
+  instagram: "instagram", messenger: "facebook", linkedin: "linkedin",
 };
+const OUR_PROVIDER = Object.fromEntries(Object.entries(UNIPILE_PROVIDER).map(([a, b]) => [b, a]));
 export const isUnipileEmail = (provider: string) => ["gmail", "outlook", "imap"].includes(provider);
 
-const base = () => `https://${env("UNIPILE_DSN").replace(/^https?:\/\//, "").replace(/\/+$/, "")}/api/v1`;
+const base = () => (process.env.UNIPILE_BASE_URL || "https://api.unipile.com").replace(/\/+$/, "");
+const seg = encodeURIComponent;
 
 export class UnipileError extends Error { constructor(public status: number, msg: string) { super(msg); } }
 
-async function api<T = Record<string, unknown>>(method: string, path: string, o: { query?: Record<string, string>; json?: unknown; form?: FormData } = {}): Promise<T> {
+async function api<T = Record<string, unknown>>(method: string, path: string, o: { query?: Record<string, string>; json?: unknown } = {}): Promise<T> {
   const qs = o.query && Object.keys(o.query).length ? `?${new URLSearchParams(o.query)}` : "";
   const headers: Record<string, string> = { "X-API-KEY": env("UNIPILE_API_KEY"), accept: "application/json" };
   if (o.json !== undefined) headers["content-type"] = "application/json";
-  const r = await fetch(`${base()}${path}${qs}`, { method, headers, body: o.form ?? (o.json !== undefined ? JSON.stringify(o.json) : undefined) });
+  const r = await fetch(`${base()}${path}${qs}`, { method, headers, body: o.json !== undefined ? JSON.stringify(o.json) : undefined });
   const j = (await r.json().catch(() => ({}))) as T & { title?: string; detail?: string; message?: string };
-  if (!r.ok) throw new UnipileError(r.status, `Unipile ${method} ${path}: ${j.detail ?? j.title ?? j.message ?? r.status}`);
+  if (!r.ok) throw new UnipileError(r.status, `Unipile ${method} ${path.replace(/acc_[\w-]+/g, "acc_…")}: ${j.detail ?? j.title ?? j.message ?? r.status}`);
   return j;
 }
 
@@ -44,7 +46,7 @@ const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(
 export const webhookKey = () => secret("webhook").toString("hex");
 export const validWebhookKey = (k: string | null) => Boolean(k) && same(k!, webhookKey());
 
-/** "<user id>.<channel>.<signature>": sent to Unipile as the account name and echoed back when the account is added. */
+/** "<user id>.<channel>.<signature>": given to Unipile and handed back when the account is added. */
 export function connectState(userId: string, provider: string) { const v = `${userId}.${provider}`; return `${v}.${sign(v)}`; }
 export function readState(state: string | null | undefined): { userId: string; provider: string } | null {
   const m = String(state ?? "").match(/^([0-9a-f-]{36})\.([a-z_]+)\.([0-9a-f]{32})$/);
@@ -55,37 +57,34 @@ export function readState(state: string | null | undefined): { userId: string; p
 
 /** A one-time link to Unipile's hosted page: Google/Microsoft sign-in, WhatsApp QR code, Telegram login, … */
 export async function hostedConnectLink(userId: string, provider: string, reconnectId?: string): Promise<string> {
-  const app = env("APP_URL");
-  const state = connectState(userId, provider);
   const body = {
-    ...(reconnectId ? { type: "reconnect", reconnect_account: reconnectId } : { type: "create", providers: [UNIPILE_PROVIDER[provider]] }),
-    api_url: `https://${env("UNIPILE_DSN").replace(/^https?:\/\//, "")}`,
-    expiresOn: new Date(Date.now() + 60 * 60_000).toISOString(),
-    name: state,
-    notify_url: `${app}/api/webhooks/unipile/connected`,
-    success_redirect_url: `${app}/settings?connecting=${provider}`,
-    failure_redirect_url: `${app}/settings?msg=${encodeURIComponent("The connection was cancelled or failed. Please try again.")}`,
+    expires_on: new Date(Date.now() + 60 * 60_000).toISOString(),
+    redirect_uri: `${env("APP_URL")}/api/connect/hosted/done`,
+    state: connectState(userId, provider),
+    ...(reconnectId ? { account_id: reconnectId } : { providers: [UNIPILE_PROVIDER[provider]] }),
   };
-  const r = await api<{ url: string }>("POST", "/hosted/accounts/link", { json: body });
-  return r.url;
+  return (await api<{ link: string }>("POST", "/v2/auth/link", { json: body })).link;
 }
 
-type UAccount = { id: string; type?: string; name?: string; connection_params?: Record<string, Record<string, unknown> | undefined> };
+type UAccount = { id: string; provider: string; name?: string; created_at?: string; status?: string };
 
-/** The address/number we show for an account Unipile just connected. */
-function identity(a: UAccount): string {
-  const p = a.connection_params ?? {};
-  const pick = (o?: Record<string, unknown>) => (o ? [o.email, o.username, o.phone_number, o.id].find((x) => typeof x === "string" && x) : undefined) as string | undefined;
-  return pick(p.mail) ?? pick(p.im) ?? pick(p.chat) ?? a.name ?? a.id;
-}
-
-/** Called from the notify webhook: stores the new account for the user it belongs to and starts the first sync. */
-export async function saveConnectedAccount(state: string, unipileId: string): Promise<{ accountId: string; userId: string } | null> {
+/**
+ * Stores an account Unipile just connected, for the user the signed state names. The account must be the kind that
+ * user asked for and either brand new (linked in the last 30 minutes) or already theirs, so nobody can attach an
+ * account they don't own by pasting its id.
+ */
+export async function saveConnectedAccount(state: string, unipileId: string): Promise<{ accountId: string; userId: string; provider: string } | null> {
   const who = readState(state);
-  if (!who || !UNIPILE_PROVIDER[who.provider]) return null;
-  const a = await api<UAccount>("GET", `/accounts/${encodeURIComponent(unipileId)}`);
-  const id = identity(a);
+  if (!who || !UNIPILE_PROVIDER[who.provider] || !/^acc_[\w-]+$/.test(unipileId)) return null;
+  const a = await api<UAccount>("GET", `/v2/accounts/${seg(unipileId)}`);
+  if (OUR_PROVIDER[a.provider] !== who.provider) return null;
   const db = supabaseAdmin();
+  const { data: owners } = await db.from("accounts").select("id, user_id").eq("remote_id", unipileId);
+  const owned = (owners ?? []) as { id: string; user_id: string }[];
+  if (owned.some((o) => o.user_id !== who.userId)) return null;
+  const fresh = a.created_at && Date.now() - new Date(a.created_at).getTime() < 30 * 60_000;
+  if (!fresh && !owned.length) return null;
+  const id = a.name || unipileId;
   const { data, error } = await db.from("accounts").upsert({
     user_id: who.userId, provider: who.provider, account_type: "personal", display_name: id, external_id: id,
     remote_id: unipileId, status: "connected", status_detail: null, can_send: true,
@@ -93,90 +92,93 @@ export async function saveConnectedAccount(state: string, unipileId: string): Pr
   if (error || !data) throw new Error(error?.message ?? "account upsert failed");
   await db.from("audit_log").insert({ user_id: who.userId, actor: "user", action: "account.connected", target: id, meta: { provider: who.provider, via: "unipile" } });
   await ensureWebhooks().catch(() => null);
-  return { accountId: data.id as string, userId: who.userId };
+  return { accountId: data.id as string, userId: who.userId, provider: who.provider };
 }
 
-/** Registers our two webhooks (new/read messages, new emails) once per Unipile workspace. */
+/** Registers our webhook once per Unipile application (new messages/emails, read changes, account status). */
 export async function ensureWebhooks() {
   const db = supabaseAdmin();
-  const url = `${env("APP_URL")}/api/webhooks/unipile`;
-  const { data } = await db.from("internal_config").select("value").eq("name", "unipile_webhooks").maybeSingle();
-  if (data?.value === url) return;
-  const headers = [{ key: "x-ub-key", value: webhookKey() }];
-  await api("POST", "/webhooks", { json: { request_url: url, name: "Unified Box messages", source: "messaging", events: ["message_received", "message_read"], headers, format: "json" } });
-  await api("POST", "/webhooks", { json: { request_url: url, name: "Unified Box email", source: "email", events: ["mail_received", "mail_sent"], headers, format: "json" } });
-  await db.from("internal_config").upsert({ name: "unipile_webhooks", value: url, updated_at: new Date().toISOString() });
+  const url = `${env("APP_URL")}/api/webhooks/unipile?k=${webhookKey()}`;
+  const marker = createHmac("sha256", secret("marker")).update(url).digest("hex").slice(0, 16);
+  const { data } = await db.from("internal_config").select("value").eq("name", "unipile_webhook").maybeSingle();
+  if (data?.value === marker) return;
+  await api("POST", "/v2/webhooks/endpoints/", { json: {
+    url, description: "Unified Box",
+    trigger_events: ["message.new", "message.update", "chat.update", "email.new", "email.update", "account.add", "account.reconnect", "account.status.disconnected", "account.status.running"],
+  } });
+  await db.from("internal_config").upsert({ name: "unipile_webhook", value: marker, updated_at: new Date().toISOString() });
 }
 
 export async function unipileDisconnect(remoteId: string) {
-  await api("DELETE", `/accounts/${encodeURIComponent(remoteId)}`).catch((e) => { if (!(e instanceof UnipileError && e.status === 404)) throw e; });
+  await api("DELETE", `/v2/accounts/${seg(remoteId)}`).catch((e) => { if (!(e instanceof UnipileError && e.status === 404)) throw e; });
 }
 
 // ---------- read ----------
 
-type UAttendee = { id?: string; provider_id?: string; name?: string; display_name?: string; is_self?: number | boolean };
+type Attendee = { email: string; display_name?: string };
 type UEmail = {
-  id: string; thread_id?: string; subject?: string; body?: string; body_plain?: string; date: string; message_id?: string; role?: string; folders?: string[];
-  read_date?: string | null; from_attendee?: { display_name?: string; identifier: string }; to_attendees?: { identifier: string }[]; cc_attendees?: { identifier: string }[];
+  id: string; thread_id?: string; subject?: string; body?: string; body_plain?: string; snippet?: string; date: string; message_id?: string;
+  folders?: string[]; is_unread?: boolean; from?: Attendee[]; to?: Attendee[]; cc?: Attendee[];
 };
-type UChat = { id: string; name?: string | null; type?: number; timestamp?: string | null; unread_count?: number; attendee_provider_id?: string };
-type UMessage = { id: string; text?: string | null; sender_id?: string; is_sender?: number | boolean; timestamp: string; attachments?: { type?: string; file_name?: string }[]; is_event?: number | boolean; hidden?: number | boolean; deleted?: number | boolean };
+type UChat = { id: string; name?: string; last_message_timestamp?: string; updated_at?: string; unread_count?: number; is_archived?: boolean };
+type UMessage = {
+  id: string; text?: string; sender_id?: string; sender?: { display_name?: string }; is_sender?: boolean; timestamp: string;
+  attachments?: { type?: string; filename?: string }[]; is_event?: boolean; is_hidden?: boolean; is_deleted?: boolean;
+};
+
+const SKIP_FOLDER = /^(trash|spam|junk|drafts?|deleteditems)$/i;
 
 export function emailToMsg(e: UEmail, self: string): GmailMsg {
-  const from = e.from_attendee?.identifier ?? "";
-  const body = (e.body_plain && e.body_plain.trim()) || htmlToText(e.body ?? "");
-  const outgoing = e.role === "sent" || from.toLowerCase() === self.toLowerCase();
+  const from = e.from?.[0]?.email ?? "";
+  const body = (e.body_plain && e.body_plain.trim()) || htmlToText(e.body ?? "") || e.snippet || "";
+  const outgoing = from.toLowerCase() === self.toLowerCase() || (e.folders ?? []).some((f) => /^sent/i.test(f));
   return {
-    id: e.id, threadId: e.thread_id || e.id, subject: e.subject ?? "", fromName: outgoing ? "You" : e.from_attendee?.display_name || from, fromAddr: from,
-    to: (e.to_attendees ?? []).map((a) => a.identifier), cc: (e.cc_attendees ?? []).map((a) => a.identifier), messageId: e.message_id ?? "",
+    id: e.id, threadId: e.thread_id || e.id, subject: e.subject ?? "", fromName: outgoing ? "You" : e.from?.[0]?.display_name || from, fromAddr: from,
+    to: (e.to ?? []).map((a) => a.email), cc: (e.cc ?? []).map((a) => a.email), messageId: e.message_id ?? "",
     body: body.slice(0, 20_000), sentAt: new Date(e.date).toISOString(), snippet: body.replace(/\s+/g, " ").slice(0, 160),
-    unread: !outgoing && !e.read_date, outgoing, automated: !outgoing && looksAutomated({ labels: [], fromAddr: from, subject: e.subject }),
+    unread: !outgoing && Boolean(e.is_unread), outgoing, automated: !outgoing && looksAutomated({ labels: [], fromAddr: from, subject: e.subject }),
   };
 }
 
 const attachmentLabel = (m: UMessage) => {
   const a = m.attachments?.[0];
   if (!a) return "";
-  return a.type === "img" ? "📷 Photo" : a.type === "video" ? "🎬 Video" : a.type === "audio" ? "🎤 Voice message" : `📎 ${a.file_name ?? "File"}`;
+  return a.type === "img" ? "📷 Photo" : a.type === "video" ? "🎬 Video" : a.type === "audio" ? "🎤 Voice message" : `📎 ${a.filename ?? "File"}`;
 };
 
 /** Pulls recent email (grouped into conversations) or recent chats for one Unipile-connected account. */
 export async function unipileRecent(remoteId: string, provider: string, self: string, sinceIso: string | null): Promise<{ convs: { ext: string; title?: string; msgs: GmailMsg[]; unread: boolean }[] }> {
+  const acc = seg(remoteId);
   if (isUnipileEmail(provider)) {
-    const { items } = await api<{ items: UEmail[] }>("GET", "/emails", { query: { account_id: remoteId, limit: "50" } });
+    const { data } = await api<{ data: UEmail[] }>("GET", `/v2/${acc}/emails`, { query: { limit: "50" } });
     const byThread = new Map<string, GmailMsg[]>();
-    for (const e of items.filter((x) => !["drafts", "trash", "spam"].includes(x.role ?? ""))) {
+    for (const e of data.filter((x) => !(x.folders ?? []).some((f) => SKIP_FOLDER.test(f)))) {
       const m = emailToMsg(e, self);
       byThread.set(m.threadId, [...(byThread.get(m.threadId) ?? []), m]);
     }
     return { convs: [...byThread].map(([ext, msgs]) => ({ ext, msgs, unread: msgs.some((m) => m.unread) })) };
   }
-  const { items: chats } = await api<{ items: UChat[] }>("GET", "/chats", { query: { account_id: remoteId, limit: "30" } });
+  const { data: chats } = await api<{ data: UChat[] }>("GET", `/v2/${acc}/chats`, { query: { limit: "30" } });
   const since = sinceIso ? new Date(sinceIso).getTime() - 5 * 60_000 : 0;
   const convs: { ext: string; title?: string; msgs: GmailMsg[]; unread: boolean }[] = [];
-  for (const c of chats.filter((x) => !x.timestamp || new Date(x.timestamp).getTime() >= since).slice(0, 20)) {
-    const [{ items: msgs }, { items: people }] = await Promise.all([
-      api<{ items: UMessage[] }>("GET", `/chats/${encodeURIComponent(c.id)}/messages`, { query: { limit: "30" } }),
-      api<{ items: UAttendee[] }>("GET", `/chats/${encodeURIComponent(c.id)}/attendees`).catch(() => ({ items: [] as UAttendee[] })),
-    ]);
-    const nameOf = new Map<string, string>();
-    for (const p of people) { const n = p.name || p.display_name; if (n) { if (p.provider_id) nameOf.set(p.provider_id, n); if (p.id) nameOf.set(p.id, n); } }
-    const others = people.filter((p) => !p.is_self).map((p) => p.name || p.display_name).filter(Boolean) as string[];
-    const title = c.name || others.join(", ") || (c.attendee_provider_id ? nameOf.get(c.attendee_provider_id) ?? c.attendee_provider_id.replace(/@.*$/, "") : "Chat");
-    const unreadCount = c.unread_count ?? 0;
-    const real = msgs.filter((m) => !m.is_event && !m.hidden && !m.deleted).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-    const incoming = real.filter((m) => !m.is_sender);
-    const unreadIds = new Set(unreadCount ? incoming.slice(-unreadCount).map((m) => m.id) : []);
+  const recent = chats.filter((c) => !c.is_archived && (!since || new Date(c.last_message_timestamp ?? c.updated_at ?? 0).getTime() >= since)).slice(0, 20);
+  for (const c of recent) {
+    const { data: msgs } = await api<{ data: UMessage[] }>("GET", `/v2/${acc}/chats/${seg(c.id)}/messages`, { query: { limit: "30" } });
+    const title = c.name || "Chat";
+    const unreadCount = Math.max(0, c.unread_count ?? 0);
+    const real = msgs.filter((m) => !m.is_event && !m.is_hidden && !m.is_deleted).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    const unreadIds = new Set(unreadCount ? real.filter((m) => !m.is_sender).slice(-unreadCount).map((m) => m.id) : []);
     const list = real.map((m): GmailMsg => {
       const text = (m.text ?? "").trim() || attachmentLabel(m) || "Message";
       const mine = Boolean(m.is_sender);
       return {
-        id: `${c.id}:${m.id}`, threadId: c.id, subject: title, fromName: mine ? "You" : nameOf.get(m.sender_id ?? "") ?? title, fromAddr: mine ? self : m.sender_id ?? "",
+        id: `${c.id}:${m.id}`, threadId: c.id, subject: title, fromName: mine ? "You" : m.sender?.display_name || title, fromAddr: mine ? self : m.sender_id ?? "",
         to: [], cc: [], messageId: "", body: text.slice(0, 20_000), sentAt: new Date(m.timestamp).toISOString(), snippet: text.slice(0, 160),
         unread: unreadIds.has(m.id), outgoing: mine, automated: false,
       };
     });
-    if (list.length) convs.push({ ext: c.id, title, msgs: list, unread: unreadCount > 0 });
+    // unread_count -1 = marked unread by hand in the app.
+    if (list.length) convs.push({ ext: c.id, title, msgs: list, unread: (c.unread_count ?? 0) !== 0 });
   }
   return { convs };
 }
@@ -186,28 +188,38 @@ export async function unipileRecent(remoteId: string, provider: string, self: st
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
 export async function unipileSendEmail(remoteId: string, m: { to: string[]; cc: string[]; subject: string; body: string; replyToId?: string }) {
-  const f = new FormData();
-  f.append("account_id", remoteId);
-  f.append("to", JSON.stringify(m.to.map((identifier) => ({ identifier }))));
-  if (m.cc.length) f.append("cc", JSON.stringify(m.cc.map((identifier) => ({ identifier }))));
-  f.append("subject", m.subject);
-  f.append("body", `<div>${esc(m.body).replace(/\n/g, "<br>")}</div>`);
-  if (m.replyToId) f.append("reply_to", m.replyToId);
-  return api<{ tracking_id?: string; provider_id?: string }>("POST", "/emails", { form: f });
+  return api<{ id?: string }>("POST", `/v2/${seg(remoteId)}/emails/send`, { json: {
+    to: m.to.map((email) => ({ email })), ...(m.cc.length ? { cc: m.cc.map((email) => ({ email })) } : {}),
+    subject: m.subject, plain_text: m.body, html: `<div>${esc(m.body).replace(/\n/g, "<br>")}</div>`,
+    ...(m.replyToId ? { reply_to_provider_id: m.replyToId } : {}),
+  } });
 }
 
-export async function unipileSendChat(chatId: string, text: string): Promise<{ id: string }> {
-  const f = new FormData();
-  f.append("text", text);
-  const r = await api<{ message_id?: string; id?: string }>("POST", `/chats/${encodeURIComponent(chatId)}/messages`, { form: f });
-  return { id: r.message_id ?? r.id ?? `local-${Date.now()}` };
+export async function unipileSendChat(remoteId: string, chatId: string, text: string): Promise<{ id: string }> {
+  const r = await api<{ message_id?: string | string[] | null }>("POST", `/v2/${seg(remoteId)}/chats/${seg(chatId)}/messages/send`, { json: { text } });
+  const id = Array.isArray(r.message_id) ? r.message_id[0] : r.message_id;
+  return { id: id ?? `local-${Date.now()}` };
 }
 
 /** Mirrors read/unread: the newest incoming email of the conversation, or the chat itself. */
-export async function unipileMark(provider: string, externalThreadId: string, newestEmailId: string | null, read: boolean) {
+export async function unipileMark(remoteId: string, provider: string, externalThreadId: string, newestEmailId: string | null, read: boolean) {
+  const acc = seg(remoteId);
   if (isUnipileEmail(provider)) {
-    if (newestEmailId) await api("PUT", `/emails/${encodeURIComponent(newestEmailId)}`, { json: { unread: !read } });
+    if (newestEmailId) await api("POST", `/v2/${acc}/emails/${seg(newestEmailId)}/${read ? "read" : "unread"}`);
   } else {
-    await api("PATCH", `/chats/${encodeURIComponent(externalThreadId)}`, { json: { action: "setReadStatus", value: read } });
+    await api("PATCH", `/v2/${acc}/chats/${seg(externalThreadId)}`, { json: { read_status: read } });
   }
+}
+
+/** Finds the Unipile account id in a webhook payload, wherever the event puts it. */
+export function payloadAccountId(b: unknown): string | null {
+  const walk = (v: unknown, parent: string, depth: number): string | null => {
+    if (depth > 4 || !v || typeof v !== "object") return null;
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+      if (typeof x === "string" && /^acc_[\w-]+$/.test(x) && (/account/.test(k) || (k === "id" && /account/.test(parent)))) return x;
+    }
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) { const r = walk(x, k, depth + 1); if (r) return r; }
+    return null;
+  };
+  return walk(b, "", 0);
 }

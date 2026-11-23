@@ -104,7 +104,7 @@ async function deliverDraft(userId: string, d: Record<string, any>): Promise<Res
       let sentId: string;
       if (acct.remote_id) {
         const { unipileSendChat } = await import("./unipile");
-        sentId = `${t.external_id}:${(await unipileSendChat(t.external_id, text)).id}`;
+        sentId = `${t.external_id}:${(await unipileSendChat(acct.remote_id as string, t.external_id, text)).id}`;
       } else if (prov === "whatsapp") {
         const { waSend } = await import("./whatsapp");
         sentId = (await waSend(d.account_id, acct.external_id, t.external_id, text)).id;

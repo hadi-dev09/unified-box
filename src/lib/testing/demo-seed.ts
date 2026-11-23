@@ -108,7 +108,7 @@ export function installDemoNetwork() {
     if (url.includes("gmail.googleapis.com") && url.endsWith("/messages/send")) return ok({ id: `demo-${Date.now()}` });
     if (url.includes("graph.facebook.com") && url.endsWith("/messages")) return ok({ messages: [{ id: `wamid.demo${Date.now()}` }] });
     // Demo Unipile: the hosted sign-in link.
-    if (url.includes("unipile.demo") && url.endsWith("/hosted/accounts/link")) return ok({ object: "HostedAuthURL", url: "https://account.unipile.com/demo-connect" });
+    if (url === "https://unipile.demo/v2/auth/link") return ok({ object: "HostedAuthLink", link: "https://auth.unipile.com/demo-connect" });
     // Demo WhatsApp gateway: QR for ~3 polls, then linked.
     if (url.startsWith("https://wa-demo.test/")) {
       const gw = globalThis as unknown as { __WA_POLLS__?: number };

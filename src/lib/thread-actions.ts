@@ -62,7 +62,7 @@ export async function applyThreadAction(userId: string, ids: string[], action: T
       for (const r of rows.filter((x) => remoteOf.has(x.account_id))) {
         try {
           const { data: newest } = await db.from("messages").select("external_id").eq("thread_id", r.id).eq("is_outgoing", false).order("sent_at", { ascending: false }).limit(1).maybeSingle();
-          await unipileMark(r.accounts?.provider ?? "", r.external_id, (newest?.external_id as string | undefined) ?? null, action === "read");
+          await unipileMark(remoteOf.get(r.account_id)!, r.accounts?.provider ?? "", r.external_id, (newest?.external_id as string | undefined) ?? null, action === "read");
           mirrored++;
         } catch { skipped++; }
       }
