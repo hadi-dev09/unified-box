@@ -28,9 +28,11 @@ const seg = encodeURIComponent;
 
 export class UnipileError extends Error { constructor(public status: number, msg: string) { super(msg); } }
 
-async function api<T = Record<string, unknown>>(method: string, path: string, o: { query?: Record<string, string>; json?: unknown } = {}): Promise<T> {
+async function api<T = Record<string, unknown>>(method: string, path: string, o: { query?: Record<string, string>; json?: unknown; service?: boolean } = {}): Promise<T> {
   const qs = o.query && Object.keys(o.query).length ? `?${new URLSearchParams(o.query)}` : "";
-  const headers: Record<string, string> = { "X-API-KEY": env("UNIPILE_API_KEY"), accept: "application/json" };
+  // Registering webhooks needs a "service" key (created in the Unipile dashboard); everything else uses the normal key.
+  const key = o.service && process.env.UNIPILE_SERVICE_KEY ? process.env.UNIPILE_SERVICE_KEY : env("UNIPILE_API_KEY");
+  const headers: Record<string, string> = { "X-API-KEY": key, accept: "application/json" };
   if (o.json !== undefined) headers["content-type"] = "application/json";
   const r = await fetch(`${base()}${path}${qs}`, { method, headers, body: o.json !== undefined ? JSON.stringify(o.json) : undefined });
   const j = (await r.json().catch(() => ({}))) as T & { title?: string; detail?: string; message?: string };
@@ -104,9 +106,9 @@ export async function ensureWebhooks() {
   if (data?.value === marker) return;
   try {
     // Reuse ours if it already exists (e.g. a previous attempt that timed out after Unipile saved it).
-    const list = await api<{ data?: { url: string }[] }>("GET", "/v2/webhooks/endpoints/").catch(() => ({ data: [] as { url: string }[] }));
+    const list = await api<{ data?: { url: string }[] }>("GET", "/v2/webhooks/endpoints/", { service: true }).catch(() => ({ data: [] as { url: string }[] }));
     if (!(list.data ?? []).some((w) => w.url === url)) {
-      await api("POST", "/v2/webhooks/endpoints/", { json: {
+      await api("POST", "/v2/webhooks/endpoints/", { service: true, json: {
         url, description: "Unified Box",
         trigger_events: ["message.new", "message.update", "chat.update", "email.new", "email.update", "account.add", "account.reconnect", "account.status.disconnected", "account.status.running"],
       } });
