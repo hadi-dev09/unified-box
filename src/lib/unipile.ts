@@ -423,6 +423,7 @@ export async function storeWebhookMessage(account: { id: string; user_id: string
 /** "chat.update" webhooks carry the chat's unread count: mirror read/unread without any extra request. */
 export async function applyChatUpdate(accountId: string, b: unknown): Promise<boolean> {
   const p = (b as { payload?: { id?: string; unread_count?: number } }).payload;
+  await logSyncEvent(accountId, "chat_update", `unread_count=${p?.unread_count ?? "none"}`);
   if (!p?.id || typeof p.unread_count !== "number") return false;
   const db = supabaseAdmin();
   const { data: t } = await db.from("threads").select("id, unread, seen_at").eq("account_id", accountId).eq("external_id", p.id).maybeSingle();

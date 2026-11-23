@@ -12,8 +12,9 @@ export function ReaderActions({ id, starred, closeHref }: { id: string; starred:
   useEffect(() => { setStar(starred); }, [starred]);
   const call = (action: string, until?: string, leave = false) => start(async () => {
     await fetch("/api/threads", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: [id], action, until }) });
-    if (leave) { window.dispatchEvent(new Event("ub:navigating")); router.push(closeHref); }
+    // Refresh first: it clears the browser's saved copies of pages, so the list we go back to shows the change.
     router.refresh();
+    if (leave) { window.dispatchEvent(new Event("ub:navigating")); router.push(closeHref); }
   });
   const btn = (icon: IconName, label: string, onClick: () => void, cls = "") => (
     <button onClick={onClick} title={label} aria-label={label} className={`inline-flex h-8 w-8 items-center justify-center rounded-lg hover:bg-[var(--surface-2)] ${cls || "muted hover:text-[var(--text)]"}`}><Icon name={icon} className="h-4 w-4" /></button>
