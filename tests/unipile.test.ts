@@ -190,3 +190,26 @@ test("media: only the message owner can load its attachment, and non-media downl
     assert.equal((await media.GET(new NextRequest("https://app.test/api/media?m=11111111-1111-4111-8111-111111111111&a=nope"))).status, 404, "unknown attachment id");
   } finally { net.restore(); db.user = prev; }
 });
+
+test("unipile v2: a new-message webhook is stored straight away, even if Unipile's message list hasn't caught up", async () => {
+  const { webhookKey, payloadMessage } = await import("../src/lib/unipile");
+  const hook = await import("../src/app/api/webhooks/unipile/route");
+  db.rows("accounts").push({ id: "w5", user_id: A.id, provider: "whatsapp_web", display_name: "+5", external_id: "+5", remote_id: "acc_w5", status: "connected", can_send: true });
+  const body = { event: "message.new", account_id: "acc_w5", data: { message: { object: "Message", id: "mB", chat_id: "chat5@lid", text: "test B", sender_id: "u9", sender: { display_name: "Abdul Hadi" }, is_sender: false, timestamp: "2026-11-23T18:59:26.000Z", attachments: [] } } };
+  assert.equal(payloadMessage(body)?.chat_id, "chat5@lid");
+  const net = stubFetch((c) => {
+    if (c.url === `${U}/acc_w5/chats/chat5%40lid`) return { object: "Chat", id: "chat5@lid", name: "Abdul Hadi", unread_count: 1, is_archived: false };
+    if (c.url.startsWith(`${U}/acc_w5/chats/chat5%40lid/messages`)) return { data: [] }; // lagging list
+    return undefined;
+  });
+  try {
+    const r = await hook.POST(new NextRequest(`https://app.test/api/webhooks/unipile?k=${webhookKey()}`, { method: "POST", body: JSON.stringify(body) }));
+    assert.equal(r.status, 200);
+    await new Promise((res) => setTimeout(res, 50));
+  } finally { net.restore(); }
+  const m = db.rows("messages").find((x) => x.external_id === "chat5@lid:mB");
+  assert.ok(m, "stored from the webhook");
+  assert.equal(m!.body_text, "test B");
+  const t = db.rows("threads").find((x) => x.account_id === "w5")!;
+  assert.equal(t.subject, "Abdul Hadi"); assert.equal(t.unread, true);
+});

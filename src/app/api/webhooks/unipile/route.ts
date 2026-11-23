@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { later } from "@/lib/later";
-import { logSyncEvent, payloadAccountId, payloadValue, saveConnectedAccount, unipileAccountDown, validWebhookKey } from "@/lib/unipile";
+import { logSyncEvent, payloadAccountId, payloadValue, saveConnectedAccount, storeWebhookMessage, unipileAccountDown, validWebhookKey } from "@/lib/unipile";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { syncAccount } from "@/lib/sync";
 
@@ -30,9 +30,18 @@ export async function POST(req: NextRequest) {
     }
     // A new message in one chat: fetch just that chat (fast); anything else: refresh the account.
     const chatId = /^message\./.test(event) ? payloadValue(b, "chat_id") : null;
-    console.log("[unipile-diag] hook", JSON.stringify({ event, chat: chatId?.slice(-6) ?? null, keys: Object.keys(b).sort().join(","), dataKeys: b.data && typeof b.data === "object" ? Object.keys(b.data as object).sort().join(",") : null }));
-    const { data } = await db.from("accounts").select("id").eq("remote_id", acc);
-    for (const a of (data ?? []) as { id: string }[]) await syncAccount(a.id, chatId ? { chatId } : {}).catch(() => null);
+    // TEMP diagnostics: payload shape (field names only).
+    const shape = (v: unknown, d: number): unknown => (d > 2 || !v || typeof v !== "object" ? typeof v : Array.isArray(v) ? [shape(v[0], d + 1)] : Object.fromEntries(Object.entries(v as object).map(([k, x]) => [k, shape(x, d + 1)])));
+    console.log("[unipile-diag] hook", JSON.stringify({ event, chat: chatId?.slice(-6) ?? null, shape: shape(b, 0) }));
+    const { data } = await db.from("accounts").select("id, user_id, external_id").eq("remote_id", acc);
+    for (const a of (data ?? []) as { id: string; user_id: string; external_id: string }[]) {
+      // New message: save it straight from the webhook (instant), then refresh that chat as a backup.
+      if (event === "message.new") {
+        const ok = await storeWebhookMessage(a, b).catch(async (e) => { await logSyncEvent(a.id, "hook_store_error", String((e as Error).message)); return false; });
+        await logSyncEvent(a.id, ok ? "hook_stored" : "hook_no_message", null as unknown as string);
+      }
+      await syncAccount(a.id, chatId ? { chatId } : {}).catch(() => null);
+    }
   });
   return NextResponse.json({ ok: true });
 }

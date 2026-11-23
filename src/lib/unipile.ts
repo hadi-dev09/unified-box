@@ -349,3 +349,45 @@ export async function unipileAccountDown(remoteId: string): Promise<boolean> {
     return e instanceof UnipileError && e.status === 404;
   }
 }
+
+/**
+ * The message inside a "message.new" webhook, wherever Unipile puts it (top level, data, data.message, …):
+ * the first object that has an id, a timestamp and text or attachments.
+ */
+export function payloadMessage(b: unknown): (UMessage & { chat_id?: string; chat_name?: string }) | null {
+  const walk = (v: unknown, depth: number): (UMessage & { chat_id?: string }) | null => {
+    if (depth > 4 || !v || typeof v !== "object" || Array.isArray(v)) return null;
+    const o = v as Record<string, unknown>;
+    const id = o.message_id ?? o.id;
+    if (typeof id === "string" && typeof o.timestamp === "string" && ("text" in o || "attachments" in o || "message" in o)) {
+      return { ...(o as unknown as UMessage), id, text: typeof o.text === "string" ? o.text : typeof o.message === "string" ? o.message : undefined };
+    }
+    for (const x of Object.values(o)) { const r = walk(x, depth + 1); if (r) return r; }
+    return null;
+  };
+  const m = walk(b, 0);
+  if (!m) return null;
+  const chatId = (m as { chat_id?: string }).chat_id ?? payloadValue(b, "chat_id") ?? undefined;
+  const name = payloadValue(b, "chat_name") ?? payloadValue(b, "name") ?? undefined;
+  return { ...m, chat_id: chatId, chat_name: name };
+}
+
+/** Stores the message carried by a webhook right away (Unipile's message list can lag minutes behind its webhook). */
+export async function storeWebhookMessage(account: { id: string; user_id: string; external_id: string }, b: unknown): Promise<boolean> {
+  const m = payloadMessage(b);
+  if (!m?.chat_id || m.is_event || m.is_hidden || m.is_deleted) return false;
+  const db = supabaseAdmin();
+  const { data: t } = await db.from("threads").select("subject").eq("account_id", account.id).eq("external_id", m.chat_id).maybeSingle();
+  const title = (t?.subject as string | undefined) || m.chat_name || m.sender?.display_name || "Chat";
+  const text = (m.text ?? "").trim() || attachmentLabel(m) || "WhatsApp doesn't share this message with linked devices. Open WhatsApp on your phone to see it.";
+  const mine = Boolean(m.is_sender);
+  const msg: GmailMsg = {
+    id: `${m.chat_id}:${m.id}`, threadId: m.chat_id, subject: title, fromName: mine ? "You" : m.sender?.display_name || title, fromAddr: mine ? account.external_id : m.sender_id ?? "",
+    to: [], cc: [], messageId: "", body: text.slice(0, 20_000), sentAt: new Date(m.timestamp).toISOString(), snippet: text.slice(0, 160),
+    unread: !mine, outgoing: mine, automated: false, attachments: toAttachments(m),
+  };
+  const { storeConversation } = await import("./sync");
+  const { loadRules } = await import("./clients");
+  await storeConversation(account, m.chat_id, [msg], !mine, await loadRules(account.user_id), title);
+  return true;
+}
