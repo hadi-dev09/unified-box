@@ -30,6 +30,7 @@ export async function POST(req: NextRequest) {
     }
     // A new message in one chat: fetch just that chat (fast); anything else: refresh the account.
     const chatId = /^message\./.test(event) ? payloadValue(b, "chat_id") : null;
+    console.log("[unipile-diag] hook", JSON.stringify({ event, chat: chatId?.slice(-6) ?? null, keys: Object.keys(b).sort().join(","), dataKeys: b.data && typeof b.data === "object" ? Object.keys(b.data as object).sort().join(",") : null }));
     const { data } = await db.from("accounts").select("id").eq("remote_id", acc);
     for (const a of (data ?? []) as { id: string }[]) await syncAccount(a.id, chatId ? { chatId } : {}).catch(() => null);
   });

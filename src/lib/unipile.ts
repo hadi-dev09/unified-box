@@ -175,6 +175,8 @@ type Conv = { ext: string; title?: string; msgs: GmailMsg[]; unread: boolean };
 async function chatConv(acc: string, c: UChat, self: string): Promise<Conv | null> {
   const mraw = await api<{ data?: UMessage[]; items?: UMessage[] }>("GET", `/v2/${acc}/chats/${seg(c.id)}/messages`, { query: { limit: "50" } });
   const msgs = mraw.data ?? mraw.items ?? [];
+  // TEMP diagnostics (ids shortened, no content).
+  console.log("[unipile-diag] chatConv", JSON.stringify({ chat: c.id.slice(-6), n: msgs.length, newest: msgs.map((m) => `${m.timestamp}|${m.is_sender ? "me" : "them"}|${(m.text ?? "").length}ch|${m.attachments?.length ?? 0}att|${m.is_event ? "ev" : ""}${m.is_hidden ? "hid" : ""}${m.is_deleted ? "del" : ""}`).sort().slice(-4) }));
   const title = c.name || "Chat";
   const unreadCount = Math.max(0, c.unread_count ?? 0);
   const real = msgs.filter((m) => !m.is_event && !m.is_hidden && !m.is_deleted).sort((x, y) => x.timestamp.localeCompare(y.timestamp));
@@ -297,6 +299,7 @@ export async function quickUnipileCheck(accountId: string): Promise<number> {
   const acc = seg(a.remote_id);
   const { data: chats } = await api<{ data: UChat[] }>("GET", `/v2/${acc}/chats`, { query: { limit: "20" } });
   const live = chats.filter((c) => !c.is_archived);
+  console.log("[unipile-diag] fast", JSON.stringify(chats.slice(0, 4).map((c) => `${c.id.slice(-6)}|${c.last_message_timestamp}|u${c.unread_count}|${c.is_archived ? "arch" : ""}`)));
   if (!live.length) return 0;
   const { data: rows } = await db.from("threads").select("id, external_id, unread, last_message_at, seen_at").eq("account_id", accountId).in("external_id", live.map((c) => c.id));
   const known = new Map(((rows ?? []) as { id: string; external_id: string; unread: boolean; last_message_at: string; seen_at: string | null }[]).map((t) => [t.external_id, t]));
