@@ -164,7 +164,9 @@ type Conv = { ext: string; title?: string; msgs: GmailMsg[]; unread: boolean };
 
 /** One chat's recent messages as a conversation. */
 async function chatConv(acc: string, c: UChat, self: string): Promise<Conv | null> {
-  const { data: msgs } = await api<{ data: UMessage[] }>("GET", `/v2/${acc}/chats/${seg(c.id)}/messages`, { query: { limit: "50" } });
+  const mraw = await api<{ data?: UMessage[]; items?: UMessage[] }>("GET", `/v2/${acc}/chats/${seg(c.id)}/messages`, { query: { limit: "50" } });
+  const msgs = mraw.data ?? mraw.items ?? [];
+  console.log("[unipile-diag] msgs", JSON.stringify({ n: msgs.length, newest: msgs.map((m) => m.timestamp).sort().slice(-2), unread: c.unread_count }));
   const title = c.name || "Chat";
   const unreadCount = Math.max(0, c.unread_count ?? 0);
   const real = msgs.filter((m) => !m.is_event && !m.is_hidden && !m.is_deleted).sort((x, y) => x.timestamp.localeCompare(y.timestamp));
@@ -198,8 +200,11 @@ export async function unipileRecent(remoteId: string, provider: string, self: st
     }
     return { convs: [...byThread].map(([ext, msgs]) => ({ ext, msgs, unread: msgs.some((m) => m.unread) })), readState: [] };
   }
-  const { data: chats } = await api<{ data: UChat[] }>("GET", `/v2/${acc}/chats`, { query: { limit: "40" } });
+  const raw = await api<{ data?: UChat[]; items?: UChat[] }>("GET", `/v2/${acc}/chats`, { query: { limit: "40" } });
+  const chats = raw.data ?? raw.items ?? [];
   const live = chats.filter((c) => !c.is_archived);
+  // TEMP diagnostics (no message content): what the chat list looks like.
+  console.log("[unipile-diag] chats", JSON.stringify({ keys: Object.keys(raw), n: chats.length, sample: chats.slice(0, 3).map((c) => ({ keys: Object.keys(c).sort().join(","), unread: c.unread_count, lmt: c.last_message_timestamp ?? null, upd: c.updated_at ?? null, arch: c.is_archived })) }));
   // For the first hour Unipile is still copying history from the phone, so re-read every chat each time.
   const settling = connectedAt && Date.now() - new Date(connectedAt).getTime() < 60 * 60_000;
   const since = sinceIso && !settling ? new Date(sinceIso).getTime() - 5 * 60_000 : 0;
