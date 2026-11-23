@@ -163,7 +163,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
           </div>
           <ReaderActions id={cur.id} starred={Boolean(cur.starred)} closeHref={closeHref} />
         </header>
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 md:px-6">
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-24 pt-4 md:px-6">
           <div className="mx-auto max-w-3xl space-y-3">
             {messages.length > 1 && <AiSummary threadId={cur.id} hasKey={hasAiKey} />}
             {isChat && <ChatTimeline messages={timeline} provider={acct?.provider ?? ""} canReply={Boolean(acct?.can_send)} threadView={Boolean(slackThreadTs)} threadLinks={threadLinks} parentHref={parentHref} />}
