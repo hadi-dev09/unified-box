@@ -298,8 +298,8 @@ export async function quickUnipileCheck(accountId: string): Promise<number> {
   const { data: chats } = await api<{ data: UChat[] }>("GET", `/v2/${acc}/chats`, { query: { limit: "20" } });
   const live = chats.filter((c) => !c.is_archived);
   if (!live.length) return 0;
-  const { data: rows } = await db.from("threads").select("id, external_id, unread, last_message_at").eq("account_id", accountId).in("external_id", live.map((c) => c.id));
-  const known = new Map(((rows ?? []) as { id: string; external_id: string; unread: boolean; last_message_at: string }[]).map((t) => [t.external_id, t]));
+  const { data: rows } = await db.from("threads").select("id, external_id, unread, last_message_at, seen_at").eq("account_id", accountId).in("external_id", live.map((c) => c.id));
+  const known = new Map(((rows ?? []) as { id: string; external_id: string; unread: boolean; last_message_at: string; seen_at: string | null }[]).map((t) => [t.external_id, t]));
   const newer = live.filter((c) => {
     const t = known.get(c.id), at = c.last_message_timestamp ?? c.updated_at;
     return !t || (at && new Date(at).getTime() > new Date(t.last_message_at).getTime() + 999);
@@ -318,6 +318,8 @@ export async function quickUnipileCheck(accountId: string): Promise<number> {
     const t = known.get(c.id);
     if (!t || newer.includes(c)) continue;
     const u = (c.unread_count ?? 0) !== 0;
+    // Just read here: WhatsApp may take a few seconds to apply it, so don't flip it back meanwhile.
+    if (u && t.seen_at && Date.now() - new Date(t.seen_at).getTime() < 60_000) continue;
     if (u !== t.unread) { await db.from("threads").update({ unread: u, ...(u ? {} : { seen_at: new Date().toISOString() }) }).eq("id", t.id); changed++; }
   }
   return changed;

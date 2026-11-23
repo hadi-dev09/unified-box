@@ -190,10 +190,11 @@ async function syncUnipile(acct: Acct & { provider: string; remote_id: string; l
     const fetched = new Set(convs.map((c) => c.ext));
     const rest = readState.filter((r) => !fetched.has(r.ext));
     if (rest.length) {
-      const { data: rows } = await db.from("threads").select("id, external_id, unread").eq("account_id", acct.id).in("external_id", rest.map((r) => r.ext));
+      const { data: rows } = await db.from("threads").select("id, external_id, unread, seen_at").eq("account_id", acct.id).in("external_id", rest.map((r) => r.ext));
       const want = new Map(rest.map((r) => [r.ext, r.unread]));
-      for (const t of (rows ?? []) as { id: string; external_id: string; unread: boolean }[]) {
+      for (const t of (rows ?? []) as { id: string; external_id: string; unread: boolean; seen_at: string | null }[]) {
         const u = want.get(t.external_id)!;
+        if (u && t.seen_at && Date.now() - new Date(t.seen_at).getTime() < 60_000) continue; // just read here; WhatsApp catching up
         if (u !== t.unread) await db.from("threads").update({ unread: u, ...(u ? {} : { seen_at: new Date().toISOString() }) }).eq("id", t.id);
       }
     }
