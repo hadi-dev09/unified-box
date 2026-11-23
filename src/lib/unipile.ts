@@ -172,11 +172,31 @@ const attachmentLabel = (m: UMessage) => {
 type Conv = { ext: string; title?: string; msgs: GmailMsg[]; unread: boolean };
 
 /** One chat's recent messages as a conversation. */
+// Unipile caps how often a chat's message list may be downloaded (e.g. 10 a minute, 100 a day on some plans).
+// New messages come in through webhooks with their full content, so downloads are only a rare backup; when Unipile
+// says "retry in …", we stop downloading until then.
+const parseRetry = (msg: string) => {
+  const m = msg.match(/retry in (\d+)\s*(second|minute|hour|day)/i);
+  if (!m) return 60_000;
+  return Number(m[1]) * ({ second: 1e3, minute: 6e4, hour: 36e5, day: 864e5 } as Record<string, number>)[m[2].toLowerCase()];
+};
+async function downloadsPaused(acc: string): Promise<boolean> {
+  const { data } = await supabaseAdmin().from("internal_config").select("value").eq("name", `unipile_pause_${acc}`).maybeSingle();
+  return Boolean(data?.value && new Date(data.value as string).getTime() > Date.now());
+}
+async function pauseDownloads(acc: string, e: unknown) {
+  if (!(e instanceof UnipileError) || e.status !== 429) return;
+  const until = new Date(Date.now() + parseRetry(e.message)).toISOString();
+  await supabaseAdmin().from("internal_config").upsert({ name: `unipile_pause_${acc}`, value: until, updated_at: new Date().toISOString() });
+}
+
 async function chatConv(acc: string, c: UChat, self: string): Promise<Conv | null> {
-  const mraw = await api<{ data?: UMessage[]; items?: UMessage[] }>("GET", `/v2/${acc}/chats/${seg(c.id)}/messages`, { query: { limit: "50" } });
+  if (await downloadsPaused(acc)) return null;
+  let mraw: { data?: UMessage[]; items?: UMessage[] };
+  try {
+    mraw = await api<{ data?: UMessage[]; items?: UMessage[] }>("GET", `/v2/${acc}/chats/${seg(c.id)}/messages`, { query: { limit: "50" } });
+  } catch (e) { await pauseDownloads(acc, e); throw e; }
   const msgs = mraw.data ?? mraw.items ?? [];
-  // TEMP diagnostics (ids shortened, no content).
-  console.log("[unipile-diag] chatConv", JSON.stringify({ chat: c.id.slice(-6), n: msgs.length, newest: msgs.map((m) => `${m.timestamp}|${m.is_sender ? "me" : "them"}|${(m.text ?? "").length}ch|${m.attachments?.length ?? 0}att|${m.is_event ? "ev" : ""}${m.is_hidden ? "hid" : ""}${m.is_deleted ? "del" : ""}`).sort().slice(-4) }));
   const title = c.name || "Chat";
   const unreadCount = Math.max(0, c.unread_count ?? 0);
   const real = msgs.filter((m) => !m.is_event && !m.is_hidden && !m.is_deleted).sort((x, y) => x.timestamp.localeCompare(y.timestamp));
@@ -199,7 +219,7 @@ async function chatConv(acc: string, c: UChat, self: string): Promise<Conv | nul
  * For chats it also returns every listed chat's read state, so "read on the phone" shows here without
  * downloading messages again.
  */
-export async function unipileRecent(remoteId: string, provider: string, self: string, sinceIso: string | null, connectedAt?: string | null): Promise<{ convs: Conv[]; readState: { ext: string; unread: boolean }[] }> {
+export async function unipileRecent(remoteId: string, provider: string, self: string, sinceIso: string | null, connectedAt?: string | null, accountId?: string): Promise<{ convs: Conv[]; readState: { ext: string; unread: boolean }[] }> {
   const acc = seg(remoteId);
   if (isUnipileEmail(provider)) {
     const { data } = await api<{ data: UEmail[] }>("GET", `/v2/${acc}/emails`, { query: { limit: "50" } });
@@ -218,11 +238,19 @@ export async function unipileRecent(remoteId: string, provider: string, self: st
   const since = sinceIso && !settling ? new Date(sinceIso).getTime() - 5 * 60_000 : 0;
   const when = (c: UChat) => c.last_message_timestamp ?? c.updated_at;
   // Chats with a newer message, plus (when Unipile gives no time) the most recent ones, which the list is sorted by.
-  const pick = since
-    ? live.filter((c, i) => (when(c) ? new Date(when(c)!).getTime() >= since : i < 10)).slice(0, 20)
-    : live.slice(0, 25);
+  // Webhooks carry new messages, so after the first hour only chats whose newest message we don't have yet are
+  // downloaded (missed webhook), at most 2 per run.
+  let haveQ = supabaseAdmin().from("threads").select("external_id, last_message_at").in("external_id", live.map((c) => c.id));
+  if (accountId) haveQ = haveQ.eq("account_id", accountId);
+  const { data: have } = await haveQ;
+  const haveAt = new Map(((have ?? []) as { external_id: string; last_message_at: string }[]).map((t) => [t.external_id, new Date(t.last_message_at).getTime()]));
+  const missing = (c: UChat) => { const at = when(c); return !haveAt.has(c.id) || Boolean(at && new Date(at).getTime() > (haveAt.get(c.id) ?? 0) + 60_000); };
+  const pick = since ? live.filter(missing).slice(0, 2) : live.slice(0, 25);
   const convs: Conv[] = [];
-  for (const c of pick) { const conv = await chatConv(acc, c, self); if (conv) convs.push(conv); }
+  for (const c of pick) {
+    try { const conv = await chatConv(acc, c, self); if (conv) convs.push(conv); }
+    catch (e) { if (e instanceof UnipileError && e.status === 429) break; throw e; }
+  }
   return { convs, readState: live.map((c) => ({ ext: c.id, unread: (c.unread_count ?? 0) !== 0 })) };
 }
 
@@ -299,21 +327,21 @@ export async function quickUnipileCheck(accountId: string): Promise<number> {
   const acc = seg(a.remote_id);
   const { data: chats } = await api<{ data: UChat[] }>("GET", `/v2/${acc}/chats`, { query: { limit: "20" } });
   const live = chats.filter((c) => !c.is_archived);
-  console.log("[unipile-diag] fast", JSON.stringify(chats.slice(0, 4).map((c) => `${c.id.slice(-6)}|${c.last_message_timestamp}|u${c.unread_count}|${c.is_archived ? "arch" : ""}`)));
   if (!live.length) return 0;
   const { data: rows } = await db.from("threads").select("id, external_id, unread, last_message_at, seen_at").eq("account_id", accountId).in("external_id", live.map((c) => c.id));
   const known = new Map(((rows ?? []) as { id: string; external_id: string; unread: boolean; last_message_at: string; seen_at: string | null }[]).map((t) => [t.external_id, t]));
   const newer = live.filter((c) => {
     const t = known.get(c.id), at = c.last_message_timestamp ?? c.updated_at;
-    return !t || (at && new Date(at).getTime() > new Date(t.last_message_at).getTime() + 999);
-  }).slice(0, 5);
+    // New messages normally arrive by webhook within seconds; download only if one is clearly missing.
+    return at && Date.now() - new Date(at).getTime() > 60_000 && (!t || new Date(at).getTime() > new Date(t.last_message_at).getTime() + 60_000);
+  }).slice(0, 1);
   let changed = 0;
   if (newer.length) {
     const { storeConversation } = await import("./sync");
     const { loadRules } = await import("./clients");
     const rules = await loadRules(a.user_id);
     for (const c of newer) {
-      const conv = await chatConv(acc, c, a.external_id);
+      const conv = await chatConv(acc, c, a.external_id).catch(() => null);
       if (conv) { await storeConversation(a, conv.ext, conv.msgs, conv.unread, rules, conv.title); changed++; }
     }
   }
@@ -389,5 +417,19 @@ export async function storeWebhookMessage(account: { id: string; user_id: string
   const { storeConversation } = await import("./sync");
   const { loadRules } = await import("./clients");
   await storeConversation(account, m.chat_id, [msg], !mine, await loadRules(account.user_id), title);
+  return true;
+}
+
+/** "chat.update" webhooks carry the chat's unread count: mirror read/unread without any extra request. */
+export async function applyChatUpdate(accountId: string, b: unknown): Promise<boolean> {
+  const p = (b as { payload?: { id?: string; unread_count?: number } }).payload;
+  if (!p?.id || typeof p.unread_count !== "number") return false;
+  const db = supabaseAdmin();
+  const { data: t } = await db.from("threads").select("id, unread, seen_at").eq("account_id", accountId).eq("external_id", p.id).maybeSingle();
+  if (!t) return false;
+  const u = p.unread_count !== 0;
+  if (u && t.seen_at && Date.now() - new Date(t.seen_at as string).getTime() < 60_000) return false; // just read here
+  if (u === t.unread) return false;
+  await db.from("threads").update({ unread: u, ...(u ? {} : { seen_at: new Date().toISOString() }) }).eq("id", t.id);
   return true;
 }

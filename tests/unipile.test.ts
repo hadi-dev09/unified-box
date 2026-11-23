@@ -213,3 +213,30 @@ test("unipile v2: a new-message webhook is stored straight away, even if Unipile
   const t = db.rows("threads").find((x) => x.account_id === "w5")!;
   assert.equal(t.subject, "Abdul Hadi"); assert.equal(t.unread, true);
 });
+
+test("unipile v2: a 'retry in …' limit pauses message downloads; chat.update webhooks mirror read state with no request", async () => {
+  const { syncAccount } = await import("../src/lib/sync");
+  const { webhookKey } = await import("../src/lib/unipile");
+  const hook = await import("../src/app/api/webhooks/unipile/route");
+  db.rows("accounts").push({ id: "w6", user_id: A.id, provider: "whatsapp_web", display_name: "+6", external_id: "+6", remote_id: "acc_w6", status: "connected", can_send: true, last_synced_at: null, created_at: "2026-01-01T00:00:00.000Z" });
+  let net = stubFetch((c) => {
+    if (c.url.startsWith(`${U}/acc_w6/chats?`)) return { data: [{ object: "Chat", id: "x1", name: "X", unread_count: 1, is_archived: false }, { object: "Chat", id: "x2", name: "Y", unread_count: 0, is_archived: false }] };
+    if (c.url.includes("/acc_w6/chats/x1/messages")) return new Response(JSON.stringify({ detail: "We only allow 100 requests. Retry in 21 hours." }), { status: 429, headers: { "content-type": "application/json" } });
+    return undefined;
+  });
+  try { await syncAccount("w6"); } finally { net.restore(); }
+  assert.ok(net.calls.every((c) => !c.url.includes("/chats/x2/messages")), "stops downloading after the limit");
+  assert.equal(db.rows("accounts").find((a) => a.id === "w6")!.status, "connected", "a limit isn't a disconnect");
+  net = stubFetch((c) => (c.url.startsWith(`${U}/acc_w6/chats?`) ? { data: [] } : undefined));
+  try { await syncAccount("w6"); } finally { net.restore(); }
+  assert.ok(net.calls.every((c) => !c.url.includes("/messages")), "still paused");
+
+  db.rows("threads").push({ id: "tx2", user_id: A.id, account_id: "w6", external_id: "x2", subject: "Y", unread: true, last_message_at: new Date().toISOString() });
+  net = stubFetch(() => undefined);
+  try {
+    await hook.POST(new NextRequest(`https://app.test/api/webhooks/unipile?k=${webhookKey()}`, { method: "POST", body: JSON.stringify({ type: "chat.update", account_id: "acc_w6", payload: { id: "x2", unread_count: 0 } }) }));
+    await new Promise((r) => setTimeout(r, 30));
+  } finally { net.restore(); }
+  assert.equal(db.rows("threads").find((t) => t.id === "tx2")!.unread, false, "read on the phone, via webhook");
+  assert.equal(net.calls.length, 0, "no Unipile request needed");
+});

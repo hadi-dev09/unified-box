@@ -182,7 +182,7 @@ async function syncUnipile(acct: Acct & { provider: string; remote_id: string; l
     const { unipileRecent, unipileOneChat } = await import("./unipile");
     const { convs, readState } = opts.chatId
       ? { convs: [await unipileOneChat(acct.remote_id, opts.chatId, acct.external_id)].filter(Boolean) as NonNullable<Awaited<ReturnType<typeof unipileOneChat>>>[], readState: [] }
-      : await unipileRecent(acct.remote_id, acct.provider, acct.external_id, acct.last_synced_at, acct.created_at);
+      : await unipileRecent(acct.remote_id, acct.provider, acct.external_id, acct.last_synced_at, acct.created_at, acct.id);
     const rules = convs.length ? await loadRules(acct.user_id) : [];
     let synced = 0;
     for (const c of convs) { await storeConversation(acct, c.ext, c.msgs, c.unread, rules, c.title); synced += c.msgs.length; }
