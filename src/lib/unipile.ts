@@ -434,3 +434,22 @@ export async function applyChatUpdate(accountId: string, b: unknown): Promise<bo
   await db.from("threads").update({ unread: u, ...(u ? {} : { seen_at: new Date().toISOString() }) }).eq("id", t.id);
   return true;
 }
+
+/**
+ * "message.update" webhooks: when an incoming message turns "seen" (you read it on your phone), the chat is read.
+ * The fields used are logged (names and flags only) so the exact shape can be confirmed.
+ */
+export async function applyMessageUpdate(accountId: string, b: unknown): Promise<boolean> {
+  const p = (b as { payload?: Record<string, unknown> }).payload ?? {};
+  const flags = Object.fromEntries(Object.entries(p).filter(([, v]) => typeof v === "boolean" || typeof v === "number").map(([k, v]) => [k, v]));
+  const seenBy = p.seen_by && typeof p.seen_by === "object" ? Object.keys(p.seen_by as object).length : null;
+  await logSyncEvent(accountId, "message_update", JSON.stringify({ keys: Object.keys(p).sort().join(","), flags, seenBy }).slice(0, 300));
+  const chatId = typeof p.chat_id === "string" ? p.chat_id : null;
+  const seen = p.is_seen === true || p.seen === true || p.read === true || p.is_read === true;
+  if (!chatId || p.is_sender === true || !seen) return false;
+  const db = supabaseAdmin();
+  const { data: t } = await db.from("threads").select("id, unread").eq("account_id", accountId).eq("external_id", chatId).maybeSingle();
+  if (!t || !t.unread) return false;
+  await db.from("threads").update({ unread: false, seen_at: new Date().toISOString() }).eq("id", t.id);
+  return true;
+}

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { later } from "@/lib/later";
-import { applyChatUpdate, logSyncEvent, payloadAccountId, saveConnectedAccount, storeWebhookMessage, unipileAccountDown, validWebhookKey } from "@/lib/unipile";
+import { applyChatUpdate, applyMessageUpdate, logSyncEvent, payloadAccountId, saveConnectedAccount, storeWebhookMessage, unipileAccountDown, validWebhookKey } from "@/lib/unipile";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { syncAccount } from "@/lib/sync";
 
@@ -36,6 +36,8 @@ export async function POST(req: NextRequest) {
         if (!ok) await logSyncEvent(a.id, "hook_no_message", event);
       } else if (event === "chat.update") {
         await applyChatUpdate(a.id, b).catch(() => false);
+      } else if (event === "message.update") {
+        await applyMessageUpdate(a.id, b).catch(() => false);
       } else if (/account\.(add|reconnect)/.test(event)) {
         await syncAccount(a.id).catch(() => null);
       }
