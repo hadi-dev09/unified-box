@@ -240,3 +240,17 @@ test("unipile v2: a 'retry in …' limit pauses message downloads; chat.update w
   assert.equal(db.rows("threads").find((t) => t.id === "tx2")!.unread, false, "read on the phone, via webhook");
   assert.equal(net.calls.length, 0, "no Unipile request needed");
 });
+
+test("unipile v2: an incoming message turning seen (read on the phone) marks the chat read; your own messages don't", async () => {
+  const { webhookKey } = await import("../src/lib/unipile");
+  const hook = await import("../src/app/api/webhooks/unipile/route");
+  db.rows("accounts").push({ id: "w7", user_id: A.id, provider: "whatsapp_web", display_name: "+7", external_id: "+7", remote_id: "acc_w7", status: "connected" });
+  db.rows("threads").push({ id: "t7", user_id: A.id, account_id: "w7", external_id: "c7@lid", subject: "Z", unread: true, last_message_at: new Date().toISOString() });
+  const send = (payload: object) => hook.POST(new NextRequest(`https://app.test/api/webhooks/unipile?k=${webhookKey()}`, { method: "POST", body: JSON.stringify({ type: "message.update", account_id: "acc_w7", payload }) }));
+  await send({ id: "m1", chat_id: "c7@lid", is_sender: true, is_seen: true });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(db.rows("threads").find((t) => t.id === "t7")!.unread, true, "the other person reading YOUR message changes nothing");
+  await send({ id: "m2", chat_id: "c7@lid", is_sender: false, is_seen: true });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(db.rows("threads").find((t) => t.id === "t7")!.unread, false);
+});
